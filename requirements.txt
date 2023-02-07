@@ -1,0 +1,16 @@
+python (conda create -n ecg_xai python=3.10 -y)
+flake8 (conda install flake8 -y)
+pytorch (conda install pytorch torchvision torchaudio pytorch-cuda=11.7 -c pytorch -c nvidia -y)
+pytorch lightning(conda install pytorch-lightning -c conda-forge -y)
+
+seaborn (conda install seaborn -y)
+
+if seaborn not installed
+- pandas (conda install pandas -y)
+- matplotlib (conda install matplotlib -y)
+
+
+neurokit2 (conda install neurokit2 -c conda-forge -y)
+- intel accelerated scikit-learn (conda install scikit-learn-intelex -y)
+wfdb (conda install wfdb -c conda-forge -y)
+ecg_plot (pip install ecg_plot)
