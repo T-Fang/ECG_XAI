@@ -1,4 +1,4 @@
-,description,diagnostic,form,rhythm,chosen,diagnostic_class,diagnostic_subclass,Statement Category,SCP-ECG Statement Description,AHA code,aECG REFID,CDISC Code,DICOM Code
+,description,diagnostic,form,rhythm,chosen,superclass,subclass,Statement Category,SCP-ECG Statement Description,AHA code,aECG REFID,CDISC Code,DICOM Code
 NDT,non-diagnostic T abnormalities,1,1,,,STTC,STTC,other ST-T descriptive statements,non-diagnostic T abnormalities,,,,
 NST_,non-specific ST changes,1,1,,,STTC,NST_,Basic roots for coding ST-T changes and abnormalities,non-specific ST changes,145,MDC_ECG_RHY_STHILOST,,
 DIG,digitalis-effect,1,1,,,STTC,STTC,other ST-T descriptive statements,suggests digitalis-effect,205,,,
