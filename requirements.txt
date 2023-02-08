@@ -1,5 +1,6 @@
 python (conda create -n ecg_xai python=3.10 -y)
 flake8 (conda install flake8 -y)
+yapf (conda install yapf -y)
 
 pytorch (conda install pytorch torchvision torchaudio pytorch-cuda=11.7 -c pytorch -c nvidia -y)
 pytorch lightning(conda install pytorch-lightning -c conda-forge -y)
