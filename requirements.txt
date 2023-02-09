@@ -3,7 +3,10 @@ flake8 (conda install flake8 -y)
 yapf (conda install yapf -y)
 
 pytorch (conda install pytorch torchvision torchaudio pytorch-cuda=11.7 -c pytorch -c nvidia -y)
+- On Mac: conda install pytorch torchvision torchaudio -c pytorch -y
 pytorch lightning(conda install pytorch-lightning -c conda-forge -y)
+optuna (conda install -c conda-forge optuna -y)
+tensorboard (conda install -c conda-forge tensorboard -y)
 
 seaborn (conda install seaborn -y)
 

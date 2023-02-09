@@ -20,7 +20,7 @@ def load_corresponding_ecg(database_df: pd.DataFrame):
         data = [wfdb.rdsamp(os.path.join(PTBXL_PATH, f)) for f in database_df.filename_lr]
     else:
         data = [wfdb.rdsamp(os.path.join(PTBXL_PATH, f)) for f in database_df.filename_hr]
-    data = np.array([signal for signal, meta in data])
+    data = np.array([signal.transpose() for signal, meta in data])
     return data
 
 
