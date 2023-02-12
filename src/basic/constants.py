@@ -13,8 +13,14 @@ TRAIN_FOLDS = [1, 2, 3, 4, 5, 6]
 VAL_FOLDS = [7, 8]
 TEST_FOLDS = [9, 10]
 
-# ECG related constants
+# ECG rule related constants
+T_THRESH = 0.1
+MIN_RULE_SATISFACTION_PERCENTAGE = 0.8
+P_THRESH = 0.07
+# ECG metadata related constants
 SAMPLING_RATE = 500
+DURATION = 10
+N_LEADS = 12
 CHOSEN_METADATA = [
     'age', 'sex', 'scp_codes', 'heart_axis', 'infarction_stadium1', 'strat_fold', 'filename_lr', 'filename_hr'
 ]
