@@ -16,6 +16,7 @@ if seaborn not installed
 
 
 neurokit2 (conda install neurokit2 -c conda-forge -y)
+- if using 'cwt' (continuous wavelet transform) in neurokit2, install pywavelets (conda install pywavelets -y)
 - intel accelerated scikit-learn (conda install scikit-learn-intelex -y)
 wfdb (conda install wfdb -c conda-forge -y)
 ecg_plot (pip install ecg_plot)
