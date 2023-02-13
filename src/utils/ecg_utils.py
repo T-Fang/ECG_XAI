@@ -1,36 +1,37 @@
 import numpy as np
+from numpy.typing import NDArray
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import neurokit2 as nk
-from src.basic.constants import SAMPLING_RATE, DURATION, MIN_RULE_SATISFACTION_PERCENTAGE, T_THRESH, P_THRESH
+from src.basic.constants import SAMPLING_RATE, DURATION, MIN_RULE_SATISFACTION_PERCENTAGE, T_AMP_THRESH, P_AMP_THRESH
 
 
-def get_rpeaks(cleaned: np.ndarray) -> np.ndarray:
+def get_rpeaks(cleaned: NDArray[np.float32]) -> NDArray[np.int32]:
     """
     Get R peaks from the cleaned ECG lead
 
     Parameters
     ----------
-    cleaned : np.ndarray
+    cleaned : NDArray[np.float32]
         The cleaned ECG lead.
 
     Returns
     -------
-    rpeaks : np.ndarray
+    rpeaks : NDArray[np.int32]
         The R peaks of the lead.
     """
     _, rpeaks_dict = nk.ecg_peaks(cleaned, sampling_rate=SAMPLING_RATE)
     return rpeaks_dict['ECG_R_Peaks']
 
 
-def get_all_rpeaks(cleaned: np.ndarray) -> list:
+def get_all_rpeaks(cleaned: NDArray[np.float32]) -> list[NDArray[np.int32]]:
     """
     Get all R peaks from the cleaned ECG signal
 
     Parameters
     ----------
-    cleaned : np.ndarray
+    cleaned : NDArray[np.float32]
         The cleaned ECG signal (might be multi-leads).
 
     Returns
@@ -45,44 +46,54 @@ def get_all_rpeaks(cleaned: np.ndarray) -> list:
     return all_rpeaks
 
 
-def get_delineation(cleaned: np.ndarray, rpeaks: np.ndarray, method: str = 'dwt') -> dict:
+def get_delineation(cleaned: NDArray[np.float32],
+                    rpeaks: NDArray[np.int32],
+                    method: str = 'dwt') -> dict[str, NDArray[np.int32]]:
     """
     Get the delineation of the cleaned ECG lead
 
     Parameters
     ----------
-    cleaned : np.ndarray
+    cleaned : NDArray[np.float32]
         The cleaned ECG lead.
-    rpeaks : np.ndarray
+    rpeaks : NDArray[np.int32]
         The R peaks of the lead.
     method : str
         The method to use for delineation. Default is 'dwt'.
 
     Returns
     -------
-    delineation : dict
+    delineation : dict[str, NDArray[np.int32]]
         The delineation of the lead.
     """
     delineation, _ = nk.ecg_delineate(cleaned, rpeaks, sampling_rate=SAMPLING_RATE, method=method)
+
+    # Add rpeaks info to the delineation dict
+    rpeak_feat = np.zeros(cleaned.shape[0])
+    rpeak_feat[rpeaks] = 1
+    delineation['ECG_R_Peaks'] = rpeak_feat
+
     return delineation
 
 
-def get_all_delineations(cleaned: np.ndarray, all_rpeaks: list[np.ndarray], method: str = 'dwt') -> list[dict]:
+def get_all_delineations(cleaned: NDArray[np.float32],
+                         all_rpeaks: list[NDArray[np.int32]],
+                         method: str = 'dwt') -> list[dict[str, NDArray[np.int32]]]:
     """
     Get all delineations from the cleaned ECG signal
 
     Parameters
     ----------
-    cleaned : np.ndarray
+    cleaned : NDArray[np.float32]
         The cleaned ECG signal (might be multi-leads).
-    all_rpeaks : list
+    all_rpeaks : list[NDArray[np.int32]]
         A list of R peaks of all leads.
     method : str
         The method to use for delineation. Default is 'dwt'.
 
     Returns
     -------
-    all_delineations : list[dict]
+    all_delineations : list[dict[str, NDArray[np.int32]]]
         A list of delineations of all leads.
     """
     if cleaned.ndim == 1:
@@ -95,15 +106,15 @@ def get_all_delineations(cleaned: np.ndarray, all_rpeaks: list[np.ndarray], meth
     return all_delineations
 
 
-def check_inverted_T(lead_signal: np.ndarray, delineation: pd.DataFrame) -> bool:
+def check_inverted_T(lead_signal: NDArray[np.float32], delineation: dict[str, NDArray[np.int32]]) -> bool:
     """
     Check if the T wave is inverted in the lead
 
     Parameters
     ----------
-    lead_signal :
+    lead_signal : NDArray[np.float32]
         The ECG signal of one lead.
-    delineation : DataFrame
+    delineation : dict[str, NDArray[np.int32]]
         A DataFrame of the same length as the ``lead_signal`` containing the delineation information.
 
     Returns
@@ -130,8 +141,8 @@ def check_inverted_T(lead_signal: np.ndarray, delineation: pd.DataFrame) -> bool
             t_onset = T_onsets[i]
             t_offset = T_offsets[i]
 
-            flag1 = lead_signal[t_peak] - T_THRESH > lead_signal[t_onset]
-            flag2 = lead_signal[t_peak] - T_THRESH > lead_signal[t_offset]
+            flag1 = lead_signal[t_peak] - T_AMP_THRESH > lead_signal[t_onset]
+            flag2 = lead_signal[t_peak] - T_AMP_THRESH > lead_signal[t_offset]
 
             all_checks.append(flag1 and flag2)
         return np.array(all_checks).mean() >= MIN_RULE_SATISFACTION_PERCENTAGE
@@ -141,20 +152,21 @@ def check_inverted_T(lead_signal: np.ndarray, delineation: pd.DataFrame) -> bool
     return is_T_inverted
 
 
-def check_all_inverted_T(cleaned: np.ndarray, delineations: list) -> np.ndarray:
+def check_all_inverted_T(cleaned: NDArray[np.float32],
+                         delineations: list[dict[str, NDArray[np.int32]]]) -> NDArray[np.bool_]:
     """
     Check if the T wave is inverted in all leads
 
     Parameters
     ----------
-    cleaned : np.ndarray
+    cleaned : NDArray[np.float32]
         The cleaned ECG signal of all leads.
-    delineations : list
+    delineations : list[dict[str, NDArray[np.int32]]]
         A list of DataFrames of the same length as a cleaned lead containing the delineation information.
 
     Returns
     -------
-    are_T_inverted : np.ndarray
+    are_T_inverted : NDArray[np.bool_]
         a boolean array showing which leads have inverted T waves.
     """
     are_T_inverted = []
@@ -163,15 +175,15 @@ def check_all_inverted_T(cleaned: np.ndarray, delineations: list) -> np.ndarray:
     return np.array(are_T_inverted)
 
 
-def check_inverted_P(lead_signal: np.ndarray, delineation: pd.DataFrame) -> bool:
+def check_inverted_P(lead_signal: NDArray[np.float32], delineation: dict[str, NDArray[np.int32]]) -> bool:
     """
     Check if the P wave is inverted in the lead
 
     Parameters
     ----------
-    lead_signal :
+    lead_signal : NDArray[np.float32]
         The ECG signal of one lead.
-    delineation : DataFrame
+    delineation : dict[str, NDArray[np.int32]]
         A DataFrame of the same length as the ``lead_signal`` containing the delineation information.
 
     Returns
@@ -198,8 +210,8 @@ def check_inverted_P(lead_signal: np.ndarray, delineation: pd.DataFrame) -> bool
             p_onset = P_onsets[i]
             p_offset = P_offsets[i]
 
-            flag1 = lead_signal[p_peak] - P_THRESH > lead_signal[p_onset]
-            flag2 = lead_signal[p_peak] - P_THRESH > lead_signal[p_offset]
+            flag1 = lead_signal[p_peak] - P_AMP_THRESH > lead_signal[p_onset]
+            flag2 = lead_signal[p_peak] - P_AMP_THRESH > lead_signal[p_offset]
 
             all_checks.append(flag1 and flag2)
         return np.array(all_checks).mean() >= MIN_RULE_SATISFACTION_PERCENTAGE
@@ -208,20 +220,21 @@ def check_inverted_P(lead_signal: np.ndarray, delineation: pd.DataFrame) -> bool
     return is_P_inverted
 
 
-def check_all_inverted_P(cleaned: np.ndarray, delineations: list) -> np.ndarray:
+def check_all_inverted_P(cleaned: NDArray[np.float32],
+                         delineations: list[dict[str, NDArray[np.int32]]]) -> NDArray[np.bool_]:
     """
     Check if the P wave is inverted in all leads
 
     Parameters
     ----------
-    cleaned : np.ndarray
+    cleaned : NDArray[np.float32]
         The cleaned ECG signal of all leads.
-    delineations : list
+    delineations : list[dict[str, NDArray[np.int32]]]
         A list of DataFrames of the same length as a cleaned lead containing the delineation information.
 
     Returns
     -------
-    are_P_inverted : np.ndarray
+    are_P_inverted : NDArray[np.bool_]
         a boolean array showing which leads have inverted P waves.
     """
     are_P_inverted = []
@@ -235,7 +248,6 @@ def check_all_inverted_P(cleaned: np.ndarray, delineations: list) -> np.ndarray:
 ########################################
 def custom_ecg_delineate_plot(
         ecg_signal,
-        rpeaks=None,
         delineation=None,
         sampling_rate=SAMPLING_RATE,
         window_range=(0.5, 1.5),
@@ -244,12 +256,6 @@ def custom_ecg_delineate_plot(
     window_start = int(window_range[0] * sampling_rate)
     window_end = int(window_range[1] * sampling_rate)
 
-    if rpeaks is not None:
-        rpeak_feat = np.zeros(ecg_signal.shape[0])
-        rpeak_feat[rpeaks] = 1
-        rpeak_feat = pd.DataFrame({"R_Peaks": rpeak_feat})
-        delineation = pd.concat([delineation, rpeak_feat], axis=1)
-
     delineation.rename(
         {
             'ECG_P_Peaks': 'P_Peaks',
@@ -257,6 +263,7 @@ def custom_ecg_delineate_plot(
             'ECG_P_Offsets': 'P_Offsets',
             'ECG_Q_Peaks': 'Q_Peaks',
             'ECG_R_Onsets': 'QRS_Onsets',
+            'ECG_R_Peaks': 'R_Peaks',
             'ECG_R_Offsets': 'QRS_Offsets',
             'ECG_S_Peaks': 'S_Peaks',
             'ECG_T_Peaks': 'T_Peaks',
@@ -301,13 +308,13 @@ def plot_heart_rate(heart_rates):
 
 
 def analyze_hrv(rpeaks):
-    rr = np.diff(rpeaks)
+    rr = np.diff(rpeaks) / SAMPLING_RATE * 1000
     hr = 60 * SAMPLING_RATE / rr
 
     hrv_analysis = {}
     hrv_analysis['Mean RR (ms)'] = np.mean(rr)
     hrv_analysis['STD RR/SDNN (ms)'] = np.std(rr)
-    hrv_analysis['Mean HR (Kubios\' style) (beats/min)'] = 60000 / np.mean(rr)
+    hrv_analysis['Mean HR (Kubios\' style) (beats/min)'] = 30000 / np.mean(rr)
     hrv_analysis['Mean HR (beats/min)'] = np.mean(hr)
     hrv_analysis['STD HR (beats/min)'] = np.std(hr)
     hrv_analysis['Min HR (beats/min)'] = np.min(hr)

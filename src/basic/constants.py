@@ -14,9 +14,11 @@ VAL_FOLDS = [7, 8]
 TEST_FOLDS = [9, 10]
 
 # ECG rule related constants
-T_THRESH = 0.1
 MIN_RULE_SATISFACTION_PERCENTAGE = 0.8
-P_THRESH = 0.07
+T_AMP_THRESH = 0.1
+P_AMP_THRESH = 0.07
+
+DEVIATION_TOL = 0.05
 # ECG metadata related constants
 SAMPLING_RATE = 500
 DURATION = 10

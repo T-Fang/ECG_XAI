@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from numpy.typing import NDArray
 import torch
 from torch.utils.data import Dataset
 
@@ -8,13 +9,13 @@ from src.basic.ecg import Ecg
 
 class EcgDataset(Dataset):
 
-    def __init__(self, sample_name: str, raw_recordings: np.ndarray, database_df: pd.DataFrame):
+    def __init__(self, sample_name: str, raw_recordings: NDArray[np.float32], database_df: pd.DataFrame):
         """
         sample_name: one of 'train', 'val' and 'test'
         """
         self.sample_name: str = sample_name
 
-        self.raw_recordings: np.ndarray = raw_recordings
+        self.raw_recordings: NDArray[np.float32] = raw_recordings
         self.database_df: pd.DataFrame = database_df
         self.ecgs: list[Ecg] = []
         self.labels: list[torch.Tensor] = []
