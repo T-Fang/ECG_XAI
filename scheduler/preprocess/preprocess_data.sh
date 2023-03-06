@@ -1,7 +1,7 @@
 #!/bin/bash
 
-ncpus='64'
-mem='512G'
+ncpus='20'
+mem='40G'
 walltime='30:00:00'
 name='preprocess_data'
 script_location='/home/ftian/storage/ECG_XAI/src/scripts/preprocess/preprocess_data.py'
