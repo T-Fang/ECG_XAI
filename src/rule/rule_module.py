@@ -7,6 +7,9 @@ from src.basic.cardiac_cycle import CardiacCycle
 from src.utils.ecg_utils import analyze_hrv
 
 
+##################################
+# TODO: Delete this file
+##################################
 def remove_outliers(values: np.ndarray):
     """
     Remove outliers from a numpy array
