@@ -1,13 +1,12 @@
 import pandas as pd
 import numpy as np
 from numpy.typing import NDArray
-import torch
-from torch.utils.data import Dataset
 
 from src.basic.ecg import Ecg
+from src.basic.rule_ml import SignalDataset
 
 
-class EcgDataset(Dataset):
+class EcgDataset(SignalDataset):
 
     def __init__(self, sample_name: str, raw_recordings: NDArray[np.float32], database_df: pd.DataFrame):
         """
@@ -17,24 +16,20 @@ class EcgDataset(Dataset):
 
         self.raw_recordings: NDArray[np.float32] = raw_recordings
         self.database_df: pd.DataFrame = database_df
-        self.ecgs: list[Ecg] = []
-        self.labels: list[torch.Tensor] = []
-
+        self.signals: list[Ecg] = []
+        self.is_ecg_used: list[bool] = []
         for i in range(len(self.raw_recordings)):
+            # TODO: remove print
+            print('processing ecg', i, 'of', len(self.raw_recordings))
             ecg = Ecg(self.raw_recordings[i], self.database_df.iloc[i])
-            self.ecgs.append(ecg)
-            self.labels.append(ecg.labels)
+            self.is_ecg_used.append(ecg.is_used)
+            if ecg.is_used:
+                self.signals.append(ecg)
 
-    def __len__(self):
-        return len(self.raw_recordings)
-
-    def __getitem__(self, index):
-        return (torch.from_numpy(self.ecgs[index].cleaned), self.labels[index])
-
-    def find_ecg_with_subclass(self, class_name: str, index: int = 0):
-        filtered_ecg = [ecg for ecg in self.ecgs if class_name in ecg.subclass.__str__()]
+    def find_ecg_with_diagnosis(self, diagnosis_name: str, index: int = 0):
+        filtered_ecg = [ecg for ecg in self.signals if diagnosis_name in ecg.str_diagnoses.__str__()]
         return filtered_ecg[index]
 
     def find_ecg_with_superclass(self, class_name: str, index: int = 0):
-        filtered_ecg = [ecg for ecg in self.ecgs if class_name in ecg.superclass.__str__()]
+        filtered_ecg = [ecg for ecg in self.signals if class_name in ecg.superclass.__str__()]
         return filtered_ecg[index]

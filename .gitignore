@@ -1,3 +1,4 @@
 .vscode/
 ._*
 __pycache__/
+data/processed/

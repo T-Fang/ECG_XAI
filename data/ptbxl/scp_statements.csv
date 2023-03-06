@@ -9,12 +9,12 @@ ASMI,anteroseptal myocardial infarction,1,,,1,MI,AMI,Myocardial Infarction,anter
 LVH,left ventricular hypertrophy,1,,,1,HYP,LVH,Ventricular Hypertrophy,left ventricular hypertrophy,142,,C71076,
 LAFB,left anterior fascicular block,1,,,1,CD,LAFB,Intraventricular and intra-atrial Conduction disturbances,left anterior fascicular block,101,MDC_ECG_BEAT_BLK_ANT_L_HEMI,C62267,D3-33140
 ISC_,non-specific ischemic,1,,,,STTC,ISC_,Basic roots for coding ST-T changes and abnormalities,ischemic ST-T changes,226,,,
-IRBBB,incomplete right bundle branch block,1,,,1,CD,IRBBB,Intraventricular and intra-atrial Conduction disturbances,incomplete right bundle branch block,105,MDC_ECG_BEAT_RBB_BLK_INCOMP,C71048,D3-33112
-1AVB,first degree AV block,1,,,1,CD,1AVB,"Sinus node dysfunction, atrial and AV-conduction defects",first degree AV block,,MDC_ECG_RHY_AV_HEART_BLK_DEG_1,C111088,
+IRBBB,incomplete right bundle branch block,1,,,1,CD,RBBB,Intraventricular and intra-atrial Conduction disturbances,incomplete right bundle branch block,105,MDC_ECG_BEAT_RBB_BLK_INCOMP,C71048,D3-33112
+1AVB,first degree AV block,1,,,1,CD,AVB,"Sinus node dysfunction, atrial and AV-conduction defects",first degree AV block,,MDC_ECG_RHY_AV_HEART_BLK_DEG_1,C111088,
 IVCD,non-specific intraventricular conduction disturbance (block),1,,,1,CD,IVCD,Intraventricular and intra-atrial Conduction disturbances,non-specific intraventricular conduction disturbance,107,MDC_ECG_BEAT_BLK_IVCD,C62271,D3-33000
 ISCAL,ischemic in anterolateral leads,1,,,,STTC,ISCA,ischemic ST-T changes,in anterolateral leads,,,,
-CRBBB,complete right bundle branch block,1,,,1,CD,CRBBB,Intraventricular and intra-atrial Conduction disturbances,(complete) right bundle branch block,106,MDC_ECG_BEAT_RBB_BLK_COMP,C62270,D3-33110
-CLBBB,complete left bundle branch block,1,,,1,CD,CLBBB,Intraventricular and intra-atrial Conduction disturbances,(complete) left bundle branch block,104,MDC_ECG_BEAT_LBB_BLK_COMP,C62269,D3-33120 or 122752
+CRBBB,complete right bundle branch block,1,,,1,CD,RBBB,Intraventricular and intra-atrial Conduction disturbances,(complete) right bundle branch block,106,MDC_ECG_BEAT_RBB_BLK_COMP,C62270,D3-33110
+CLBBB,complete left bundle branch block,1,,,1,CD,LBBB,Intraventricular and intra-atrial Conduction disturbances,(complete) left bundle branch block,104,MDC_ECG_BEAT_LBB_BLK_COMP,C62269,D3-33120 or 122752
 ILMI,inferolateral myocardial infarction,1,,,1,MI,IMI LMI,Myocardial Infarction,inferolateral myocardial infarction,,,,
 LAO/LAE,left atrial overload/enlargement,1,,,1,HYP,LAE,Atrial statements,left atrial overload/enlargement,140,,,
 AMI,anterior myocardial infarction,1,,,1,MI,AMI,Myocardial Infarction,anterior myocardial infarction,160,,,
@@ -32,7 +32,7 @@ ANEUR,ST-T changes compatible with ventricular aneurysm,1,,,,STTC,STTC,other ST-
 RAO/RAE,right atrial overload/enlargement,1,,,1,HYP,RAE,Atrial statements,right atrial overload/enlargement,141,,,
 EL,electrolytic disturbance or drug (former EDIS),1,,,,STTC,STTC,physiopathological nature of ST-T changes,compatible with electrolyte abnormalities,,,,
 WPW,Wolf-Parkinson-White syndrome,1,,,1,CD,WPW,Intraventricular and intra-atrial Conduction disturbances,Wolff-Parkinson-White syndrome,,MDC_ECG_RHY_WPW_UNK,C35132,
-ILBBB,incomplete left bundle branch block,1,,,1,CD,ILBBB,Intraventricular and intra-atrial Conduction disturbances,incomplete left bundle branch block,,MDC_ECG_BEAT_LBB_BLK_INCOMP,C71047,
+ILBBB,incomplete left bundle branch block,1,,,1,CD,LBBB,Intraventricular and intra-atrial Conduction disturbances,incomplete left bundle branch block,,MDC_ECG_BEAT_LBB_BLK_INCOMP,C71047,
 IPLMI,inferoposterolateral myocardial infarction,1,,,1,MI,IMI LMI,Myocardial Infarction,inferoposterolateral myocardial infarction,,,,
 ISCAN,ischemic in anterior leads,1,,,,STTC,ISCA,ischemic ST-T changes,in anterior leads,,,,
 IPMI,inferoposterior myocardial infarction,1,,,1,MI,IMI,Myocardial Infarction,inferoposterior myocardial infarction,,,,
