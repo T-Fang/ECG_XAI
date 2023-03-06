@@ -101,7 +101,7 @@ class Ecg(Signal):
             self.delineations: list[dict[str, list]] = get_all_delineations(self.cleaned,
                                                                             self.all_rpeaks,
                                                                             method=method)
-        except ValueError:
+        except:  # noqa: E722
             if VERBOSE:
                 print('Cannot delineate the ECG signal')
             self.is_used = False
@@ -129,7 +129,7 @@ class Ecg(Signal):
             inverted_ecg_delineations, _, _ = inverted_ecg.delineate(method=method,
                                                                      check_T_inversion=False,
                                                                      check_P_inversion=False)
-        except ValueError:
+        except:  # noqa: E722
             if VERBOSE:
                 print('Cannot delineate the inverted ECG signal')
         else:
