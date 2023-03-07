@@ -30,6 +30,7 @@ class Ecg(Signal):
         self.raw: NDArray[np.float32] = raw
         self.metadata: pd.Series = metadata
         self.diagnoses: torch.Tensor = keys_to_vector(self.metadata.diagnoses, enum_type=Diagnosis)
+        self.is_used: bool = True
         if preprocess:
             self._preprocess()
 
@@ -79,7 +80,15 @@ class Ecg(Signal):
 
         if VERBOSE:
             print('Finding R-peaks...')
-        self.all_rpeaks: list[NDArray[np.int32]] = get_all_rpeaks(self.cleaned)
+
+        self.all_rpeaks: list[NDArray[np.int64]] = []
+        try:
+            self.all_rpeaks = get_all_rpeaks(self.cleaned)
+        except:  # noqa: E722
+            if VERBOSE:
+                print('--> Cannot find R-peaks')
+            self.is_used = False
+
         return self.all_rpeaks
 
     @property
@@ -96,6 +105,9 @@ class Ecg(Signal):
         are_T_inverted = [False] * N_LEADS
         are_P_inverted = [False] * N_LEADS
 
+        if not self.is_used:
+            return self.delineations, are_P_inverted, are_T_inverted
+
         # Delineate the ECG signal
         try:
             self.delineations: list[dict[str, list]] = get_all_delineations(self.cleaned,
@@ -103,7 +115,7 @@ class Ecg(Signal):
                                                                             method=method)
         except:  # noqa: E722
             if VERBOSE:
-                print('Cannot delineate the ECG signal')
+                print('--> Cannot delineate the ECG signal')
             self.is_used = False
             return self.delineations, are_P_inverted, are_T_inverted
 
@@ -113,47 +125,44 @@ class Ecg(Signal):
             if not all(n_feat == all_n_feat[0] for n_feat in all_n_feat):
                 if VERBOSE:
                     print(
-                        'In at least one lead, not all features (such as P peaks) have the same number of feature points'
+                        '--> In at least one lead, not all features (such as P peaks) have the same number of feature points'
                     )
                 self.is_used = False
                 return self.delineations, are_P_inverted, are_T_inverted
-
-        self.is_used = True
 
         # Refine delineation if wave inversions occur
         if not check_T_inversion and not check_P_inversion:
             return self.delineations, are_P_inverted, are_T_inverted
 
         inverted_ecg: Ecg = self.invert()
-        try:
-            inverted_ecg_delineations, _, _ = inverted_ecg.delineate(method=method,
-                                                                     check_T_inversion=False,
-                                                                     check_P_inversion=False)
-        except:  # noqa: E722
+
+        inverted_ecg_delineations, _, _ = inverted_ecg.delineate(method=method,
+                                                                 check_T_inversion=False,
+                                                                 check_P_inversion=False)
+
+        if not inverted_ecg_delineations:
             if VERBOSE:
-                print('Cannot delineate the inverted ECG signal')
-        else:
-
-            def refine_inversion(wave_name: str):
-                are_waves_inverted = check_all_inverted_waves(wave_name, self.cleaned, self.delineations)
-                for i in are_waves_inverted.nonzero()[0]:
-                    if len(self.delineations[i]['ECG_R_Peaks']) != len(inverted_ecg.delineations[i]['ECG_R_Peaks']):
-                        continue
-                    inverted_ecg_delineation = inverted_ecg_delineations[i]
-                    if not check_inverted_wave(wave_name, self.cleaned[i], inverted_ecg_delineation):
-                        self.delineations[i][f'ECG_{wave_name}_Peaks'] = inverted_ecg_delineation[
-                            f'ECG_{wave_name}_Peaks']
-                        self.delineations[i][f'ECG_{wave_name}_Onsets'] = inverted_ecg_delineation[
-                            f'ECG_{wave_name}_Onsets']
-                        self.delineations[i][f'ECG_{wave_name}_Offsets'] = inverted_ecg_delineation[
-                            f'ECG_{wave_name}_Offsets']
-
-                return are_waves_inverted
-
-            are_P_inverted = refine_inversion('P') if check_P_inversion else are_P_inverted
-            are_T_inverted = refine_inversion('T') if check_T_inversion else are_T_inverted
-        finally:
+                print('--> Cannot delineate the inverted ECG signal')
             return self.delineations, are_P_inverted, are_T_inverted
+
+        def refine_inversion(wave_name: str):
+
+            are_waves_inverted = check_all_inverted_waves(wave_name, self.cleaned, self.delineations)
+            for i in are_waves_inverted.nonzero()[0]:
+                inverted_delineation = inverted_ecg_delineations[i]
+                if len(self.delineations[i]['ECG_R_Peaks']) != len(inverted_delineation['ECG_R_Peaks']):
+                    continue
+                if not check_inverted_wave(wave_name, self.cleaned[i], inverted_delineation):
+                    self.delineations[i][f'ECG_{wave_name}_Peaks'] = inverted_delineation[f'ECG_{wave_name}_Peaks']
+                    self.delineations[i][f'ECG_{wave_name}_Onsets'] = inverted_delineation[f'ECG_{wave_name}_Onsets']
+                    self.delineations[i][f'ECG_{wave_name}_Offsets'] = inverted_delineation[f'ECG_{wave_name}_Offsets']
+
+            return are_waves_inverted
+
+        are_P_inverted = refine_inversion('P') if check_P_inversion else are_P_inverted
+        are_T_inverted = refine_inversion('T') if check_T_inversion else are_T_inverted
+
+        return self.delineations, are_P_inverted, are_T_inverted
 
     @property
     def has_delineated(self):
@@ -170,7 +179,7 @@ class Ecg(Signal):
 
         self.all_cycles: list[list[CardiacCycle]] = get_all_cycles(self.delineations)
         if not self.all_cycles[0]:
-            print('No cardiac cycles found in the ECG signal')
+            print('--> No cardiac cycles found in the ECG signal')
             self.is_used = False
         return self.all_cycles
 
