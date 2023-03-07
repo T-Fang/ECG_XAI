@@ -178,8 +178,10 @@ class Ecg(Signal):
             return self.all_cycles
 
         self.all_cycles: list[list[CardiacCycle]] = get_all_cycles(self.delineations)
-        if not self.all_cycles[0]:
-            print('--> No cardiac cycles found in the ECG signal')
+        # check all leads have at least one cardiac cycle
+        if not all(self.all_cycles[i] for i in range(N_LEADS)):
+            if VERBOSE:
+                print('--> Not all leads have at least one cardiac cycle')
             self.is_used = False
         return self.all_cycles
 

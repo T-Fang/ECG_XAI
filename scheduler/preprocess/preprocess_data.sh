@@ -1,6 +1,6 @@
 #!/bin/bash
 
-ncpus='20'
+ncpus='24'
 mem='40G'
 walltime='30:00:00'
 name='preprocess_data'
