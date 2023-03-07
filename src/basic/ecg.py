@@ -135,14 +135,13 @@ class Ecg(Signal):
             return self.delineations, are_P_inverted, are_T_inverted
 
         inverted_ecg: Ecg = self.invert()
-
+        if VERBOSE:
+            print('* Delineating inverted ECG signal... *')
         inverted_ecg_delineations, _, _ = inverted_ecg.delineate(method=method,
                                                                  check_T_inversion=False,
                                                                  check_P_inversion=False)
 
         if not inverted_ecg_delineations:
-            if VERBOSE:
-                print('--> Cannot delineate the inverted ECG signal')
             return self.delineations, are_P_inverted, are_T_inverted
 
         def refine_inversion(wave_name: str):
