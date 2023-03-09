@@ -135,15 +135,10 @@ def check_inverted_wave(wave_name: str, lead_signal: NDArray[np.float32], deline
     wave_onsets = delineation[f'ECG_{wave_name}_Onsets']
     wave_peaks = delineation[f'ECG_{wave_name}_Peaks']
     wave_offsets = delineation[f'ECG_{wave_name}_Offsets']
-    if len(wave_onsets) == 0 or len(wave_peaks) == 0 or len(wave_offsets) == 0:
-        return False
-    if wave_onsets[0] > wave_peaks[0]:
-        wave_peaks = wave_peaks[1:]
-    if wave_onsets[0] > wave_offsets[0]:
-        wave_offsets = wave_offsets[1:]
 
-    num_wave = min(len(wave_peaks), len(wave_onsets), len(wave_offsets))
-    if num_wave == 0:
+    assert len(wave_onsets) == len(wave_peaks) == len(wave_offsets)
+    n_wave = len(wave_onsets)
+    if len(wave_onsets) == 0:
         return False
 
     wave_amp_thresh = T_AMP_THRESH if wave_name == 'T' else P_AMP_THRESH
@@ -158,7 +153,7 @@ def check_inverted_wave(wave_name: str, lead_signal: NDArray[np.float32], deline
     def check_onset_offset():
         # the detected wave cannot be too flat
         all_checks = []
-        for i in range(num_wave):
+        for i in range(n_wave):
             wave_peak = wave_peaks[i]
             wave_onset = wave_onsets[i]
             wave_offset = wave_offsets[i]

@@ -67,48 +67,51 @@ def keys_to_vector(keys: list[str] | pd.Series, enum_type: Diagnosis | Feature) 
     return vector
 
 
-def pad_vector(vec: torch.Tensor, keys: list[str], enum_type: Diagnosis | Feature):
-    """
-    Pad the prediction/feature vector with zeros
-    such that the last dimension match the total number of elements in the ``enum_type``
-
-    vec: a single prediction/feature vector or batched prediction/feature vectors
-    keys: list of str showing corresponding labels of the ``vec``
-    """
-
-    output_shape = list(vec.shape)
-    if vec.dim() == 1:
-        output_shape[0] = len(enum_type)
-        output = torch.zeros(output_shape)
-        output.to(vec)
-        output[[enum_type[label].value for label in keys]] = vec
-    elif vec.dim() == 2:
-        output_shape[1] = len(enum_type)
-        output = torch.zeros(output_shape)
-        output.to(vec)
-        output[:, [enum_type[label].value for label in keys]] = vec
+def zero_vec(vec_type: Diagnosis | Feature, extra_dim: list[int] | None = None):
+    # vec = torch.zeros(len(Feature) + len(Diagnosis), dtype=torch.float32)
+    if not extra_dim:
+        vec = torch.zeros(len(vec_type), dtype=torch.float32)
     else:
-        raise ValueError(f"vec must be 1 or 2 dimensional, got {vec.dim()}")
-    return output
+        vec = torch.zeros([*extra_dim, len(vec_type)], dtype=torch.float32)
+    return vec
 
 
-def zero_mid_output():
-    return torch.zeros(len(Feature) + len(Diagnosis))
-
-
-# TODO: allow batched version mid_output
-def fill_mid_output(mid_output: torch.Tensor, values: torch.Tensor, keys: list[str], enum_type: Diagnosis | Feature):
+def fill_vec(vec: torch.Tensor, values: torch.Tensor, keys: list[str], vec_type: Diagnosis | Feature):
     """
-    Fill the middle output with the given values (values' corresponding keys are also given)
+    Fill the vector with the given values (values' corresponding keys are also given)
     """
-    offset = 0 if enum_type == Diagnosis else len(Diagnosis)
-    mid_output[[enum_type[key].value for key in keys] + offset] = values
-    return mid_output
+    if vec.ndim == 1:
+        vec[[vec_type[key].value for key in keys]] = values.type(torch.float32)
+    elif vec.ndim == 2:
+        vec[:, [vec_type[key].value for key in keys]] = values.type(torch.float32)
+    else:
+        raise ValueError(f"vec must be 1 or 2 dimensional, got {vec.ndim}")
+    return vec
 
 
-def get_mid_output_by_str(mid_output: torch.Tensor, keys: list[str], enum_type: Diagnosis | Feature):
+def pad_vector(values: torch.Tensor, keys: list[str], enum_type: Diagnosis | Feature):
     """
-    Get the middle output by the given list of string keys
+    Pad the diagnoses/feature values with zeros
+    such that the they become corresponding vectors,
+    whose last dimension match the total number of elements in the ``enum_type``
     """
-    offset = 0 if enum_type == Diagnosis else len(Diagnosis)
-    return mid_output[[enum_type[key].value for key in keys] + offset]
+
+    extra_dim = list(values.shape)[:-1]
+    empty_vec = zero_vec(enum_type, extra_dim)
+    padded_vec = fill_vec(empty_vec, values, keys, enum_type)
+    return padded_vec
+
+
+def get_by_str(vec: torch.Tensor, keys: list[str], vec_type: Diagnosis | Feature):
+    """
+    Get features/diagnoses by the given list of string keys
+    """
+    if not keys:
+        return None
+
+    idx = vec_type[keys[0]].value if len(keys) == 1 else [vec_type[key].value for key in keys]
+    if vec.ndim == 1:
+        return vec[idx]
+
+    # if it is batched vectors
+    return vec[:, idx]
