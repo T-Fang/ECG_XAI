@@ -77,7 +77,7 @@ class BlockModule(StepModule):
         self.qrs_dur_ge = GE(self.mid_output, 'LQRS_imp', LQRS_THRESH)
 
         # input to imply is of shape (batch_size, 1 + feat_vec_len + embed_len)
-        self.mid_output['imply_input_dim'] = 1 + len(Feature) + self.mid_output['output_dim']
+        self.mid_output['imply_input_dim'] = 1 + len(Feature) + self.all_mid_output['EcgEmbed']['output_dim']
         # TODO: tune AVB_imply's output_dims and lattice_sizes
         self.AVB_imply = Imply(self.mid_output,
                                consequents=['AVB'],
@@ -108,8 +108,10 @@ class BlockModule(StepModule):
 
         # Assemble input for the all Imply
         common_imply_input = torch.cat((batched_feat_vec, self.all_mid_output['EcgEmbed']['embed']), dim=1)
-        AVB_imply_input = torch.cat((torch.unsqueeze(self.mid_output['LPR_imp'], 0), common_imply_input), dim=1)
-        BBB_imply_input = torch.cat((torch.unsqueeze(self.mid_output['LQRS_imp'], 0), common_imply_input), dim=1)
+        print(common_imply_input.shape)
+        print(torch.unsqueeze(self.mid_output['LPR_imp'], 1).shape)
+        AVB_imply_input = torch.cat((torch.unsqueeze(self.mid_output['LPR_imp'], 1), common_imply_input), dim=1)
+        BBB_imply_input = torch.cat((torch.unsqueeze(self.mid_output['LQRS_imp'], 1), common_imply_input), dim=1)
 
         self.AVB_imply(AVB_imply_input)
         self.BBB_imply(BBB_imply_input)

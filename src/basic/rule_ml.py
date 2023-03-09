@@ -146,7 +146,7 @@ class Imply(LogicConnect):
         self.lattice_sizes = lattice_sizes
 
         # lattice is not compatible with negated consequent
-        assert not (sum(self.negate_consequent) and self.use_lattice)
+        assert not (sum(self.negate_consequents) and self.use_lattice)
 
         # if both lattice and MPA methods are used,
         # then the first index is the evaluation result of the antecedent and lattice_inc_indices must be [0]
@@ -171,6 +171,10 @@ class Imply(LogicConnect):
     def is_mpa_and_lattice(self):
         return self.use_mpa and self.lattice_inc_indices
 
+    @property
+    def n_consequents(self):
+        return len(self.consequents)
+
     def _mlp_embed_layers(self):
         layers = []
         input_dim = self.input_dim
@@ -184,7 +188,7 @@ class Imply(LogicConnect):
 
     def init_mlp(self):
         layers = [self._mlp_embed_layers()]
-        layers.append(nn.Linear(self.output_dims[-1], len(self.consequents)))
+        layers.append(nn.Linear(self.output_dims[-1], self.n_consequents))
         self.add_module("mlp", nn.Sequential(*layers))
 
     def init_lattice(self):
@@ -193,7 +197,7 @@ class Imply(LogicConnect):
         # all consequents will share the embed layer and have their own output layer
         # * May change to other embedding layer other than MLP
         self.embed_layer = self._mlp_embed_layers()
-        for i in len(self.consequents):
+        for i in range(self.n_consequents):
             output_layer = nn.Linear(self.output_dims[-1], 1)
             consequent_model = nn.Sequential(self.embed_layer, output_layer)
             self.add_module(f"l{i}", HLattice(self.input_dim, sizes, self.lattice_inc_indices, consequent_model))
