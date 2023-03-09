@@ -7,7 +7,8 @@ import pytorch_lightning as pl
 # from enum import Enum
 from torch.utils.data import Dataset
 from pmlayer.torch.layers import HLattice
-from torchmetrics import Accuracy, F1Score, MetricCollection, Precision, Recall
+from torchmetrics import MetricCollection
+from torchmetrics.classification import MultilabelAccuracy, MultilabelPrecision, MultilabelRecall, MultilabelF1Score
 from src.basic.dx_and_feat import Diagnosis, pad_vector
 from src.basic.constants import FEAT_LOSS_WEIGHT, REG_LOSS_WEIGHT
 
@@ -160,6 +161,10 @@ class Imply(LogicConnect):
             self.init_lattice()
 
     @property
+    def non_mono_input_dim(self):
+        return self.input_dim - len(self.lattice_inc_indices) if self.use_lattice else self.input_dim - 1
+
+    @property
     def use_mlp(self):
         return not bool(self.lattice_inc_indices)
 
@@ -177,7 +182,7 @@ class Imply(LogicConnect):
 
     def _mlp_embed_layers(self):
         layers = []
-        input_dim = self.input_dim
+        input_dim = self.non_mono_input_dim
         for output_dim in self.output_dims:
             layers.append(nn.Linear(input_dim, output_dim))
             layers.append(nn.ReLU())
@@ -205,6 +210,7 @@ class Imply(LogicConnect):
     def get_output(self, x):
         # x is the batched input of size Nxinput_dim, where N is the batch size
         if self.use_mlp:
+            x = x[:, 1:]
             mlp_output = self.mlp(x)
         for i, consequent in enumerate(self.consequents):
             pre_activated_modification = RHO * x[:, 0] if self.use_mpa else 0
@@ -215,7 +221,8 @@ class Imply(LogicConnect):
                 self.mid_output[consequent] = torch.sigmoid(mlp_output[:, i] + pre_activated_modification)
             elif self.use_lattice:
                 # TODO: can be further optimized
-                self.mid_output[consequent] = torch.sigmoid(getattr(self, f"l{i}")(x) + pre_activated_modification)
+                self.mid_output[consequent] = torch.sigmoid(
+                    torch.squeeze(getattr(self, f"l{i}")(x)) + pre_activated_modification)
 
 
 class Predicate(Formula):
@@ -398,30 +405,34 @@ class PipelineModule(pl.LightningModule):
     It contains some pre-defined methods and attributes such as metrics from torchmetrics.
     """
 
-    def __init__(self, pipeline: StepModule):
+    def __init__(self):
         super().__init__()
         # * May be tuned
         self.loss_fn = nn.BCELoss()
         self.metric_average = 'macro'
-        self.pipeline = pipeline
+        self.pipeline = None
 
         self.all_mid_output: dict[str, dict[str, torch.Tensor]] = {}
         self.train_metric = MetricCollection({
-            'acc': Accuracy(task='multilabel', num_classes=len(Diagnosis), average=self.metric_average),
-            'f1': F1Score(task='multilabel', num_classes=len(Diagnosis), average=self.metric_average)
+            'acc': MultilabelAccuracy(num_labels=len(Diagnosis), average=self.metric_average),
+            'f1': MultilabelF1Score(num_labels=len(Diagnosis), average=self.metric_average)
         })
         self.val_metric = MetricCollection({
-            'acc': Accuracy(task='multilabel', num_classes=len(Diagnosis), average=self.metric_average),
-            'precision': Precision(task='multilabel', num_classes=len(Diagnosis), average=self.metric_average),
-            'recall': Recall(task='multilabel', num_classes=len(Diagnosis), average=self.metric_average),
-            'f1': F1Score(task='multilabel', num_classes=len(Diagnosis), average=self.metric_average)
+            'acc': MultilabelAccuracy(num_labels=len(Diagnosis), average=self.metric_average),
+            'precision': MultilabelPrecision(num_labels=len(Diagnosis), average=self.metric_average),
+            'recall': MultilabelRecall(num_labels=len(Diagnosis), average=self.metric_average),
+            'f1': MultilabelF1Score(num_labels=len(Diagnosis), average=self.metric_average)
         })
         self.test_metric = MetricCollection({
-            'acc': Accuracy(task='multilabel', num_classes=len(Diagnosis), average=self.metric_average),
-            'precision': Precision(task='multilabel', num_classes=len(Diagnosis), average=self.metric_average),
-            'recall': Recall(task='multilabel', num_classes=len(Diagnosis), average=self.metric_average),
-            'f1': F1Score(task='multilabel', num_classes=len(Diagnosis), average=self.metric_average)
+            'acc': MultilabelAccuracy(num_labels=len(Diagnosis), average=self.metric_average),
+            'precision': MultilabelPrecision(num_labels=len(Diagnosis), average=self.metric_average),
+            'recall': MultilabelRecall(num_labels=len(Diagnosis), average=self.metric_average),
+            'f1': MultilabelF1Score(num_labels=len(Diagnosis), average=self.metric_average)
         })
+
+    def add_pipeline(self, pipeline: StepModule):
+        # The pipeline should hook up with this PipelineModule's add_mid_output
+        self.pipeline = pipeline
 
     def clear_mid_output(self):
         self.pipeline.clear_mid_output()
@@ -458,9 +469,9 @@ class PipelineModule(pl.LightningModule):
     def get_y_and_loss(self, batch):
         x, y = batch
         feat_loss, reg_loss = self.pipeline(x)
-        AVB = self.all_mid_outputs['BlockModule']['AVB']
-        LBBB = self.all_mid_outputs['BlockModule']['LBBB']
-        RBBB = self.all_mid_outputs['BlockModule']['RBBB']
+        AVB = self.all_mid_output['BlockModule']['AVB']
+        LBBB = self.all_mid_output['BlockModule']['LBBB']
+        RBBB = self.all_mid_output['BlockModule']['RBBB']
 
         values = torch.stack([AVB, LBBB, RBBB], dim=1)
         y_hat = pad_vector(values, ['AVB', 'LBBB', 'RBBB'], Diagnosis)
@@ -479,6 +490,7 @@ class PipelineModule(pl.LightningModule):
         self.log_train_metric(train_metric, False)
 
         loss = dx_loss + FEAT_LOSS_WEIGHT * feat_loss + REG_LOSS_WEIGHT * reg_loss
+        self.log("train_step/total_loss", loss, prog_bar=False)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -486,9 +498,8 @@ class PipelineModule(pl.LightningModule):
 
         self.val_metric.update(y_hat, y)
 
-        val_loss = self.loss_fn(y_hat, y)
-        self.log("val_step/loss", val_loss, prog_bar=False, on_step=True, on_epoch=False)
-
+        loss = dx_loss + FEAT_LOSS_WEIGHT * feat_loss + REG_LOSS_WEIGHT * reg_loss
+        self.log("val_step/total_loss", loss, prog_bar=False)
         # val_metric = self.val_metric(y_hat, y)
         # self.log_val_metric(val_metric, False)
 
@@ -496,6 +507,9 @@ class PipelineModule(pl.LightningModule):
         (y_hat, y), (dx_loss, feat_loss, reg_loss) = self.get_y_and_loss(batch)
 
         self.test_metric.update(y_hat, y)
+
+        loss = dx_loss + FEAT_LOSS_WEIGHT * feat_loss + REG_LOSS_WEIGHT * reg_loss
+        self.log("test_step/total_loss", loss, prog_bar=False)
         # test_metric = self.test_metric(y_hat, y)
         # self.log_test_metric(test_metric, False)
 
