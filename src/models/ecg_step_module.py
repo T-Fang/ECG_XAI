@@ -108,8 +108,6 @@ class BlockModule(StepModule):
 
         # Assemble input for the all Imply
         common_imply_input = torch.cat((batched_feat_vec, self.all_mid_output['EcgEmbed']['embed']), dim=1)
-        print(common_imply_input.shape)
-        print(torch.unsqueeze(self.mid_output['LPR_imp'], 1).shape)
         AVB_imply_input = torch.cat((torch.unsqueeze(self.mid_output['LPR_imp'], 1), common_imply_input), dim=1)
         BBB_imply_input = torch.cat((torch.unsqueeze(self.mid_output['LQRS_imp'], 1), common_imply_input), dim=1)
 
