@@ -9,7 +9,7 @@ from numpy.typing import NDArray
 from neurokit2.signal import signal_rate
 
 from src.basic.rule_ml import Signal
-from src.basic.dx_and_feat import Diagnosis, Feature, keys_to_vector, zero_mid_output, fill_mid_output
+from src.basic.dx_and_feat import Diagnosis, Feature, keys_to_vector, zero_vec, fill_vec
 from src.basic.constants import SAMPLING_RATE, LEAD_TO_INDEX, N_LEADS, ALL_LEADS
 from src.utils.ecg_utils import get_all_rpeaks, get_all_delineations, custom_ecg_delineate_plot, analyze_hrv, check_inverted_wave, check_all_inverted_waves  # noqa: E501
 from src.basic.cardiac_cycle import CardiacCycle, get_all_cycles
@@ -38,10 +38,9 @@ class Ecg(Signal):
         return torch.from_numpy(self.cleaned)
 
     def get_feat(self):
-        mid_output = zero_mid_output()
-        fill_mid_output(mid_output, torch.tensor([self.LPR, self.SHORTPR, self.PRDUR]), ['LPR', 'SHORTPR', 'PRDUR'],
-                        Feature)
-        fill_mid_output(mid_output, torch.tensor([self.LQRS, self.QRSDUR]), ['LQRS', 'QRSDUR'], Feature)
+        mid_output = zero_vec(Feature)
+        fill_vec(mid_output, torch.tensor([self.LPR, self.SHORTPR, self.PRDUR]), ['LPR', 'SHORTPR', 'PRDUR'], Feature)
+        fill_vec(mid_output, torch.tensor([self.LQRS, self.QRSDUR]), ['LQRS', 'QRSDUR'], Feature)
 
         return mid_output
 
@@ -151,7 +150,7 @@ class Ecg(Signal):
                 inverted_delineation = inverted_ecg_delineations[i]
                 if len(self.delineations[i]['ECG_R_Peaks']) != len(inverted_delineation['ECG_R_Peaks']):
                     continue
-                if not check_inverted_wave(wave_name, self.cleaned[i], inverted_delineation):
+                if not check_inverted_wave(wave_name, inverted_ecg.cleaned[i], inverted_delineation):
                     self.delineations[i][f'ECG_{wave_name}_Peaks'] = inverted_delineation[f'ECG_{wave_name}_Peaks']
                     self.delineations[i][f'ECG_{wave_name}_Onsets'] = inverted_delineation[f'ECG_{wave_name}_Onsets']
                     self.delineations[i][f'ECG_{wave_name}_Offsets'] = inverted_delineation[f'ECG_{wave_name}_Offsets']
@@ -195,13 +194,13 @@ class Ecg(Signal):
         """
         Calculate all features
         """
-        # if not self.has_cycles:
-        #     self.get_cycles()
-        # if VERBOSE:
-        #     print('Calculating features...')
-        # self.calc_PR()
-        # self.calc_QRS()
-        pass
+        if not self.has_cycles:
+            self.get_cycles()
+        if VERBOSE:
+            print('Calculating features...')
+        # self.calc_heart_rate()
+        self.calc_PR()
+        self.calc_QRS()
 
     def agg_feat_across_leads(self, cycle_feat_func: Callable, leads: list[str] = ALL_LEADS, use_mean: bool = True):
         """
@@ -228,10 +227,10 @@ class Ecg(Signal):
         return np.nanmean(lead_features, axis=0)
 
     def calc_PR(self):
-        self.LPR, self.SHORTPR, self.PRDUR = self.agg_feat_across_leads(lambda cycle: cycle.get_PR())
+        self.LPR, self.SHORTPR, self.PRDUR = self.agg_feat_across_leads(lambda cycle: cycle.get_PR_dur())
 
     def calc_QRS(self):
-        self.LQRS, self.QRSDUR = self.agg_feat_across_leads(lambda cycle: cycle.get_QRS())
+        self.LQRS, self.QRSDUR = self.agg_feat_across_leads(lambda cycle: cycle.get_QRS_dur())
 
     def calc_heart_rate(self):
         """
@@ -239,16 +238,15 @@ class Ecg(Signal):
         """
         if not self.has_found_rpeaks:
             self.find_rpeaks()
-        self.all_heart_rates = []
+        all_heart_rates = []
         for i in range(N_LEADS):
             rpeaks = self.all_rpeaks[i]
-            self.all_heart_rates.append(
-                signal_rate(rpeaks, sampling_rate=SAMPLING_RATE, desired_length=self.raw.shape[1]))
+            all_heart_rates.append(signal_rate(rpeaks, sampling_rate=SAMPLING_RATE, desired_length=self.raw.shape[1]))
 
-        self.all_heart_rates = np.stack(self.all_heart_rates)
-        self.heart_rate_mean = np.mean(self.all_heart_rates)
-        self.heart_rate_std = np.std(self.all_heart_rates)
-        return self.all_heart_rates
+        all_heart_rates = np.stack(all_heart_rates)
+        self.heart_rate_mean = np.mean(all_heart_rates)
+        self.heart_rate_std = np.std(all_heart_rates)
+        return self.heart_rate_mean
 
     def calc_hrv(self):
         """
