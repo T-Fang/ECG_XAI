@@ -48,7 +48,7 @@ class Feature(Enum):
     LRWPT = 13  # prolonged R-wave peak time
     WIDES = 14  # wide S wave
     HYPT = 15  # hyper-acute T wave
-    SHORTPR = 16  # short PR interval
+    SPR = 16  # short PR interval
     HPVOLT = 17  # high P wave voltage
     LP = 18  # prolonged P wave duration
 
@@ -56,8 +56,8 @@ class Feature(Enum):
     # Numerical features #
     #######################
     HR = 19  # heart rate
-    PRDUR = 20  # PR interval duration
-    QRSDUR = 21  # QRS duration
+    PR_DUR = 20  # PR interval duration
+    QRS_DUR = 21  # QRS duration
 
 
 def keys_to_vector(keys: list[str] | pd.Series, enum_type: Diagnosis | Feature) -> torch.Tensor:

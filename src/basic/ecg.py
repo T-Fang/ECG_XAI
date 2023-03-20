@@ -39,8 +39,8 @@ class Ecg(Signal):
 
     def get_feat(self):
         mid_output = zero_vec(Feature)
-        fill_vec(mid_output, torch.tensor([self.LPR, self.SHORTPR, self.PRDUR]), ['LPR', 'SHORTPR', 'PRDUR'], Feature)
-        fill_vec(mid_output, torch.tensor([self.LQRS, self.QRSDUR]), ['LQRS', 'QRSDUR'], Feature)
+        fill_vec(mid_output, torch.tensor([self.LPR, self.SPR, self.PR_DUR]), ['LPR', 'SPR', 'PR_DUR'], Feature)
+        fill_vec(mid_output, torch.tensor([self.LQRS, self.QRS_DUR]), ['LQRS', 'QRS_DUR'], Feature)
 
         return mid_output
 
@@ -227,10 +227,10 @@ class Ecg(Signal):
         return np.nanmean(lead_features, axis=0)
 
     def calc_PR(self):
-        self.LPR, self.SHORTPR, self.PRDUR = self.agg_feat_across_leads(lambda cycle: cycle.get_PR_dur())
+        self.LPR, self.SPR, self.PR_DUR = self.agg_feat_across_leads(lambda cycle: cycle.get_PR_dur())
 
     def calc_QRS(self):
-        self.LQRS, self.QRSDUR = self.agg_feat_across_leads(lambda cycle: cycle.get_QRS_dur())
+        self.LQRS, self.QRS_DUR = self.agg_feat_across_leads(lambda cycle: cycle.get_QRS_dur())
 
     def calc_heart_rate(self):
         """

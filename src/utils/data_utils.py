@@ -176,7 +176,7 @@ class SignalDataModule(pl.LightningDataModule):
         """
         Load all processed datasets with features.
 
-        If the corresponding dataset files do not exist, \
+        If the corresponding dataset files do not exist,
         calculate features of each instances in the datasets and save them to disk.
         """
         if re_calc_feat or not self.ds_path_exists('train', with_feat=True):

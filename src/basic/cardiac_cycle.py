@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
-from src.basic.constants import MS_PER_INDEX, LPR_THRESH, SHORTPR_THRESH, LQRS_THRESH
+from src.basic.constants import MS_PER_INDEX, LPR_THRESH, SPR_THRESH, LQRS_THRESH
 
 
 @dataclass
@@ -20,7 +20,7 @@ class CardiacCycle():
 
     def get_PR_dur(self):
         pr_dur = (self.QRS_onset - self.P_onset) * MS_PER_INDEX
-        return int(pr_dur > LPR_THRESH), int(pr_dur < SHORTPR_THRESH), pr_dur
+        return int(pr_dur > LPR_THRESH), int(pr_dur < SPR_THRESH), pr_dur
 
     def get_QRS_dur(self):
         qrs_dur = (self.QRS_offset - self.QRS_onset) * MS_PER_INDEX

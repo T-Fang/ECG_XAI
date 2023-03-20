@@ -2,7 +2,7 @@ import optuna
 import torch
 from pytorch_lightning import Trainer, loggers as pl_loggers
 from src.models.ecg_step_module import EcgEmbed, BlockModule
-from src.basic.constants import LOG_INTERVAL
+from src.basic.constants import LOG_INTERVAL, CHECK_VAL_EVERY_N_EPOCH
 from src.basic.rule_ml import SeqSteps, PipelineModule
 from src.utils.data_utils import EcgDataModule
 from src.utils.train_utils import get_trainer_callbacks
@@ -34,6 +34,7 @@ def objective_default(trial: optuna.Trial, data_module: EcgDataModule, save_dir:
         gpus=1 if torch.cuda.is_available() else None,
         logger=pl_loggers.TensorBoardLogger(save_dir=save_dir),
         log_every_n_steps=LOG_INTERVAL,
+        check_val_every_n_epoch=CHECK_VAL_EVERY_N_EPOCH,
         enable_progress_bar=False)
 
     # record hyperparameters

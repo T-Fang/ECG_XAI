@@ -10,6 +10,7 @@ from src.basic.constants import MANUAL_SEED, TRAIN_LOG_PATH
 import optuna
 from optuna.samplers import TPESampler
 from optuna.integration import PyTorchLightningPruningCallback
+# from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
 
@@ -67,13 +68,14 @@ def print_best_trial(study: optuna.Trial):
 
 
 def get_trainer_callbacks(trial, save_top_k: int):
-    optuna_pruning = PyTorchLightningPruningCallback(trial, monitor="val_epoch/mse_loss")
+    optuna_pruning = PyTorchLightningPruningCallback(trial, monitor="val_loss/total_loss")
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
+    # early_stop_callback = EarlyStopping(monitor="val_loss/total_loss", min_delta=0.000001, patience=5, mode="min")
     checkpoint_callback = ModelCheckpoint(save_top_k=save_top_k,
-                                          monitor="val_epoch/mse_loss",
+                                          monitor="val_loss/total_loss",
                                           mode="min",
                                           save_last=True,
-                                          filename="epoch={epoch}-step={step}-val_mse={val_epoch/mse_loss:.7f}",
+                                          filename="epoch={epoch}-step={step}-val_loss={val_loss/total_loss:.7f}",
                                           auto_insert_metric_name=False)
     checkpoint_callback.CHECKPOINT_NAME_LAST = "epoch={epoch}-step={step}-last"
 
