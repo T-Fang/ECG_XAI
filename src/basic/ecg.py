@@ -10,8 +10,8 @@ from neurokit2.signal import signal_rate
 
 from src.basic.rule_ml import Signal
 from src.basic.dx_and_feat import Diagnosis, Feature, keys_to_vector, zero_vec, fill_vec
-from src.basic.constants import SAMPLING_RATE, LEAD_TO_INDEX, N_LEADS, ALL_LEADS
-from src.utils.ecg_utils import get_all_rpeaks, get_all_delineations, custom_ecg_delineate_plot, analyze_hrv, check_inverted_wave, check_all_inverted_waves  # noqa: E501
+from src.basic.constants import AGE_OLD_THRESH, LVH_L1_OLD_THRESH, LVH_L1_YOUNG_THRESH, LVH_L2_FEMALE_THRESH, LVH_L2_MALE_THRESH, MS_PER_INDEX, P_LEADS, PRWP_LEADS, SAMPLING_RATE, LEAD_TO_INDEX, N_LEADS, ALL_LEADS, DURATION, T_LEADS  # noqa: E501
+from src.utils.ecg_utils import get_all_rpeaks, get_all_delineations, custom_ecg_delineate_plot, check_inverted_wave, check_all_inverted_waves  # noqa: E501
 from src.basic.cardiac_cycle import CardiacCycle, get_all_cycles
 
 VERBOSE = True  # for debugging purpose only
@@ -198,9 +198,51 @@ class Ecg(Signal):
             self.get_cycles()
         if VERBOSE:
             print('Calculating features...')
-        # self.calc_heart_rate()
+        self.add_extra_info()
+
+        # * calculate objective features for RhythmModule
+        self.calc_heart_rate()
+        self.calc_sinus()
+        self.calc_RR_DIFF()
+
+        # * calculate objective features for BlockModule
         self.calc_PR()
         self.calc_QRS()
+
+        # * calculate objective features for WPWModule
+        # Already calculated when getting objective features for BlockModule
+
+        # * calculate objective features for STModule
+        self.calc_ST()
+
+        # * calculate objective features for QRModule
+        self.calc_PRWP()
+        self.calc_PATH_Q()
+
+        # * calculate objective features for PModule
+        self.calc_P()
+
+        # * calculate objective features for VHModule
+        self.calc_VH_related()
+
+        # * calculate objective features for TModule
+        self.calc_T()
+
+        # * calculate objective features for AxisModule
+        self.calc_axis()
+
+    def add_extra_info(self):
+        """
+        Add extra information to each cardiac cycle's ``extra_info`` dict,
+        such as reference to the corresponding lead signal.
+        """
+        for lead in ALL_LEADS:
+            lead_idx = LEAD_TO_INDEX[lead]
+            for cycle in self.all_cycles[lead_idx]:
+                cycle.extra_info['age_range'] = self.age_range
+                cycle.extra_info['lead'] = lead
+                cycle.extra_info['signal'] = self.cleaned[lead_idx]
+                cycle.get_Q_offset()
 
     def agg_feat_across_leads(self, cycle_feat_func: Callable, leads: list[str] = ALL_LEADS, use_mean: bool = True):
         """
@@ -212,55 +254,143 @@ class Ecg(Signal):
             If not, the features will be return as a dict of lead -> tuple(bool feature, numerical feature)
         """
         if use_mean:
-            lead_features = [self.calc_lead_feature(lead, cycle_feat_func) for lead in leads]
-            return np.nanmean(lead_features, axis=0)
+            lead_features = [self.calc_lead_feat(lead, cycle_feat_func) for lead in leads]
+            return np.mean(lead_features, axis=0)
         else:
-            return {lead: self.calc_lead_feature(lead, cycle_feat_func) for lead in leads}
+            return {lead: self.calc_lead_feat(lead, cycle_feat_func) for lead in leads}
 
-    def calc_lead_feature(self, lead: str, cycle_feat_func: Callable):
+    def calc_lead_feat(self, lead: str, cycle_feat_func: Callable):
         """
         Calculate an averaged features (both boolean and numerical ones specified by the ``cycle_feat_func``) for the given lead
         cycle_feat_func: a function that takes a CardiacCycle and returns a tuple of boolean features and numerical features
         """
         lead_cycles = self.all_cycles[LEAD_TO_INDEX[lead]]
         lead_features = np.array([cycle_feat_func(cycle) for cycle in lead_cycles])
-        return np.nanmean(lead_features, axis=0)
 
-    def calc_PR(self):
-        self.LPR, self.SPR, self.PR_DUR = self.agg_feat_across_leads(lambda cycle: cycle.get_PR_dur())
+        mean_lead_feat: np.ndarray = np.nanmean(lead_features, axis=0)
+        if np.isnan(mean_lead_feat).any():
+            mean_lead_feat = np.zeros(mean_lead_feat.shape, dtype=int)
+        return mean_lead_feat
 
-    def calc_QRS(self):
-        self.LQRS, self.QRS_DUR = self.agg_feat_across_leads(lambda cycle: cycle.get_QRS_dur())
-
+    # * Objective features for RhythmModule
     def calc_heart_rate(self):
-        """
-        Calculate heart rate for each lead
-        """
-        if not self.has_found_rpeaks:
-            self.find_rpeaks()
         all_heart_rates = []
         for i in range(N_LEADS):
             rpeaks = self.all_rpeaks[i]
             all_heart_rates.append(signal_rate(rpeaks, sampling_rate=SAMPLING_RATE, desired_length=self.raw.shape[1]))
 
         all_heart_rates = np.stack(all_heart_rates)
-        self.heart_rate_mean = np.mean(all_heart_rates)
-        self.heart_rate_std = np.std(all_heart_rates)
-        return self.heart_rate_mean
+        self.HR = np.nanmean(all_heart_rates)
+        self.HR_STD = np.std(all_heart_rates)
+        self.expected_n_cycles = int(self.HR * DURATION / 60)
+        self.BRAD = self.HR < 60
+        self.TACH = self.HR > 100
 
-    def calc_hrv(self):
+    def calc_sinus(self):
         """
-        Calculate heart rate variability for each lead
+        Examine lead II and check whether each P wave is +ve AND followed by a QRS
         """
-        if not self.has_found_rpeaks:
-            self.find_rpeaks()
-        self.all_hrv = []
+        lead_II_cycles = self.all_cycles[LEAD_TO_INDEX['II']]
+        n_sinus_cycles = 0
+        for cycle in lead_II_cycles:
+            if cycle.is_sinus():
+                n_sinus_cycles += 1
+        self.SINUS = n_sinus_cycles / self.expected_n_cycles
+
+    def calc_RR_DIFF(self):
+        """
+        Calculate the difference between max RR interval and min RR interval
+        """
+        all_RR_DIFF = []
         for i in range(N_LEADS):
             rpeaks = self.all_rpeaks[i]
-            hrv_analysis = analyze_hrv(rpeaks)
-            self.all_hrv.append(hrv_analysis['RMSSD (ms)'])
+            if len(rpeaks) < 2:
+                continue
+            rr_intervals = np.diff(rpeaks)
+            all_RR_DIFF.append(np.max(rr_intervals) - np.min(rr_intervals))
 
-        return self.all_hrv
+        if not all_RR_DIFF:
+            self.RR_DIFF = 0
+        else:
+            self.RR_DIFF = np.mean(all_RR_DIFF) * MS_PER_INDEX
+
+    # * Objective features for BlockModule
+    def calc_PR(self):
+        self.LPR, self.SPR, self.PR_DUR = self.agg_feat_across_leads(lambda cycle: cycle.get_PR_dur())
+
+    def calc_QRS(self):
+        self.LQRS, self.LQRS_WPW, self.QRS_DUR = self.agg_feat_across_leads(lambda cycle: cycle.get_QRS_dur())
+
+    # * Objective features for WPWModule
+    # Already calculated when getting objective features for BlockModule
+
+    # * Objective features for STModule
+    def calc_ST(self):
+        for lead in ALL_LEADS:
+            ST_feat = self.calc_lead_feat(lead, lambda cycle: cycle.get_ST_amp())
+            setattr(self, f'STE_{lead}', ST_feat[0])
+            setattr(self, f'STD_{lead}', ST_feat[1])
+            setattr(self, f'ST_AMP_{lead}', ST_feat[2])
+
+    # * Objective features for QRModule
+    def calc_PRWP(self):
+        all_PRWP = []
+        for lead in PRWP_LEADS:
+            PRWP = self.calc_lead_feat(lead, lambda cycle: cycle.get_PRWP())
+            all_PRWP.append(PRWP)
+        self.PRWP = min(1, sum(all_PRWP))
+
+    def calc_PATH_Q(self):
+        for lead in ALL_LEADS:
+            Q_feat = self.calc_lead_feat(lead, lambda cycle: cycle.get_PATH_Q())
+            setattr(self, f'Q_DUR_{lead}', Q_feat[0])
+            setattr(self, f'Q_AMP_{lead}', Q_feat[1])
+            setattr(self, f'PATH_Q_{lead}', Q_feat[2])
+
+    # * Objective features for PModule
+    def calc_P(self):
+        self.LP_II, self.P_DUR_II = self.calc_lead_feat('II', lambda cycle: cycle.get_P_dur())
+        for lead in P_LEADS:
+            P_feat = self.calc_lead_feat(lead, lambda cycle: cycle.get_P_amp())
+            setattr(self, f'PEAK_P_{lead}', P_feat[0])
+            setattr(self, f'P_AMP_{lead}', P_feat[1])
+
+    # * Objective features for VHModule
+    def calc_VH_related(self):
+        self.AGE = self.age
+        self.AGE_OLD = int(self.AGE > AGE_OLD_THRESH)
+        self.MALE = int(not self.sex)
+        self.R_AMP_V1, self.S_AMP_V1, self.PEAK_R_V1, _, self.DOM_R_V1, _, self.RS_RATIO_V1 = self.calc_lead_feat(
+            'V1', lambda cycle: cycle.get_RS_ratio())
+        self.R_AMP_V5, self.S_AMP_V5, _, self.DEEP_S_V5, _, self.DOM_S_V5, self.RS_RATIO_V5 = self.calc_lead_feat(
+            'V5', lambda cycle: cycle.get_RS_ratio())
+        self.R_AMP_V6, self.S_AMP_V6, _, self.DEEP_S_V6, _, self.DOM_S_V5, self.RS_RATIO_V6 = self.calc_lead_feat(
+            'V6', lambda cycle: cycle.get_RS_ratio())
+        self.R_AMP_aVL = self.calc_lead_feat('aVL', lambda cycle: cycle.R_amp)
+        self.S_AMP_V3 = self.calc_lead_feat('V3', lambda cycle: cycle.S_amp)
+
+        LVH_L1_left_term = self.S_AMP_V1 + self.R_AMP_V6
+        self.LVH_L1_OLD = int(LVH_L1_left_term > LVH_L1_OLD_THRESH)
+        self.LVH_L1_YOUNG = int(LVH_L1_left_term > LVH_L1_YOUNG_THRESH)
+
+        LVH_L2_left_term = self.R_AMP_aVL + self.S_AMP_V3
+        self.LVH_L2_MALE = int(LVH_L2_left_term > LVH_L2_MALE_THRESH)
+        self.LVH_L2_FEMALE = int(LVH_L2_left_term > LVH_L2_FEMALE_THRESH)
+
+    # * Objective features for TModule
+    def calc_T(self):
+        for lead in T_LEADS:
+            T_feat = self.calc_lead_feat(lead, lambda cycle: cycle.get_T_amp())
+            setattr(self, f'INVT_{lead}', T_feat[0])
+            setattr(self, f'T_AMP_{lead}', T_feat[1])
+
+    # * Objective features for TModule
+    def calc_axis(self):
+        self.POS_QRS_I, self.QRS_SUM_I = self.calc_lead_feat('I', lambda cycle: cycle.get_QRS_sum())
+        self.POS_QRS_aVF, self.QRS_SUM_aVF = self.calc_lead_feat('aVF', lambda cycle: cycle.get_QRS_sum())
+        self.NORM_AXIS = max(0, self.POS_QRS_I + self.POS_QRS_aVF - 1)
+        self.LAD = max(0, self.POS_QRS_I - self.POS_QRS_aVF)
+        self.RAD = max(0, self.POS_QRS_aVF - self.POS_QRS_I)
 
     ##############################
     # Properties
@@ -274,7 +404,16 @@ class Ecg(Signal):
         return self.metadata.age
 
     @property
-    def gender(self):
+    def age_range(self):
+        if self.age < 20:
+            return 'young'
+        elif self.age < 30:
+            return 'middle'
+        else:
+            return 'old'
+
+    @property
+    def sex(self):
         """
         gender of the patient (male 0, female 1)
         """

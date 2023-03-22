@@ -73,8 +73,9 @@ class StepModule(nn.Module):
 
     - A step module should implements a forward() method
         that process the input, store the results in its mid_output dict,
-        The forward() method should return a loss dict,
-        containing 'feat' (loss for correspondence between objective feat and feat impressions)
+        The forward() method should return a loss dict.
+
+        For example, for ``EcgStep``s, the loss dict should contain 'feat' (loss for correspondence between objective feat and feat impressions)
         and 'delta' (regularization loss for the delta of comparison operators/predicates)
     """
 
@@ -116,6 +117,9 @@ class StepModule(nn.Module):
 
     @property
     def mid_output_to_agg(self) -> list[tuple[str, str]]:
+        """
+        Aggregate feature impressions, which can later be saved to a csv file after each validation epoch if required
+        """
         pass
 
     @property
@@ -144,6 +148,16 @@ class SeqSteps(StepModule):
         super().clear_mid_output()
         for step in self.steps:
             step.clear_mid_output()
+
+    def use_hard_rule(self):
+        self.is_using_hard_rule = True
+        for step in self.steps:
+            step.use_hard_rule()
+
+    def use_soft_rule(self):
+        self.is_using_hard_rule = False
+        for step in self.steps:
+            step.use_soft_rule()
 
     def forward(self, x):
         all_feat_loss = []
@@ -217,6 +231,7 @@ class PipelineModule(pl.LightningModule):
         self.feat_loss_weight = hparams['feat_loss_weight']
         self.delta_loss_weight = hparams['delta_loss_weight']
         self.mid_output_agg_dir: str = hparams['mid_output_agg_dir']
+        self.is_agg_mid_output: bool = hparams['is_agg_mid_output'] if 'is_agg_mid_output' in hparams else False
 
         # get individual optimizer hyperparams
         self.initial_lr = hparams['initial_lr']
@@ -304,7 +319,7 @@ class PipelineModule(pl.LightningModule):
             else:
                 ensemble_layer = getattr(self, f'{dx.name}_ensemble')
                 imps = [self.all_mid_output[module_name][imp_name] for module_name, imp_name in imp_names]
-                dx_pred = ensemble_layer(torch.stack(imps, dim=1)).squeeze(dim=1)
+                dx_pred = F.sigmoid(ensemble_layer(torch.stack(imps, dim=1)).squeeze())
 
             all_dx_pred.append(dx_pred)
             all_dx_name.append(dx.name)
@@ -387,7 +402,8 @@ class PipelineModule(pl.LightningModule):
 
         self.log_loss('val', dx_loss, feat_loss, delta_loss)
         self.log_extra_loss('val')
-        self.add_mid_output_to_agg(y_hat, batch)
+        if self.is_agg_mid_output:
+            self.add_mid_output_to_agg(y_hat, batch)
 
         self.val_metric.update(y_hat, y)
         self.log_dict(self.val_metric)
@@ -399,7 +415,8 @@ class PipelineModule(pl.LightningModule):
 
         self.log_loss('test', dx_loss, feat_loss, delta_loss)
         self.log_extra_loss('test')
-        self.add_mid_output_to_agg(y_hat, batch)
+        if self.is_agg_mid_output:
+            self.add_mid_output_to_agg(y_hat, batch)
 
         self.test_metric.update(y_hat, y)
         self.log_dict(self.test_metric)
@@ -418,12 +435,14 @@ class PipelineModule(pl.LightningModule):
         mid_output_agg_df.to_csv(mid_output_agg_path)
 
     def validation_epoch_end(self, outputs):
-        self.agg_mid_output('val')
-        self.mid_output_agg.clear()
+        if self.is_agg_mid_output:
+            self.agg_mid_output('val')
+            self.mid_output_agg.clear()
 
     def test_epoch_end(self, outputs):
-        self.agg_mid_output('test')
-        self.mid_output_agg.clear()
+        if self.is_agg_mid_output:
+            self.agg_mid_output('test')
+            self.mid_output_agg.clear()
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.initial_lr)
@@ -531,8 +550,13 @@ class Imply(LogicConnect):
         # if we use the method of modifying pre-activated values,
         # then it is assumed that the first index is the evaluation result of the antecedent
         self.use_mpav = hparams['use_mpav'] if 'use_mpav' in hparams else False
-        self.lattice_inc_indices = hparams['lattice_inc_indices'] if 'lattice_inc_indices' in hparams else []
         self.lattice_sizes = hparams['lattice_sizes'] if 'lattice_sizes' in hparams else []
+        if 'lattice_inc_indices' in hparams:
+            self.lattice_inc_indices = hparams['lattice_inc_indices']
+        elif self.lattice_sizes:
+            self.lattice_inc_indices = [0]
+        else:
+            self.lattice_inc_indices = []
 
         self.rho = nn.Parameter(torch.tensor(0.5, dtype=torch.float32), requires_grad=True)
 
@@ -544,8 +568,6 @@ class Imply(LogicConnect):
         if self.use_mpav and self.use_lattice:
             assert self.lattice_inc_indices == [0]
 
-        # * May change to other embedding layer other than MLP
-        self.decision_embed = self._mlp_embed_layers()
         # define models
         if self.use_mlp:
             self.init_mlp()
@@ -554,34 +576,23 @@ class Imply(LogicConnect):
 
     @property
     def non_mono_input_dim(self):
-        return self.input_dim - len(self.lattice_inc_indices) if self.use_lattice else self.input_dim - 1
+        return self.input_dim - len(self.lattice_sizes) if self.use_lattice else self.input_dim - 1
 
     @property
     def use_mlp(self):
-        return not bool(self.lattice_inc_indices)
+        return not bool(self.lattice_sizes)
 
     @property
     def use_lattice(self):
-        return bool(self.lattice_inc_indices)
+        return bool(self.lattice_sizes)
 
     @property
     def is_mpa_and_lattice(self):
-        return self.use_mpav and self.lattice_inc_indices
+        return self.use_mpav and self.lattice_sizes
 
     @property
     def n_consequents(self):
         return len(self.consequents)
-
-    def _mlp_embed_layers(self):
-        layers = []
-        input_dim = self.non_mono_input_dim
-        for output_dim in self.output_dims:
-            layers.append(nn.Linear(input_dim, output_dim))
-            layers.append(nn.ReLU())
-            layers.append(nn.BatchNorm1d(output_dim))
-            input_dim = output_dim
-
-        return nn.Sequential(*layers)
 
     def init_mlp(self):
         self.add_module("mlp_output", nn.Linear(self.output_dims[-1], self.n_consequents))
@@ -594,25 +605,26 @@ class Imply(LogicConnect):
             self.add_module(f"l{i}", HL(self.input_dim, sizes, self.lattice_inc_indices, self.output_dims[-1]))
 
     def apply_soft_rule(self, x):
+        x, decision_embed = x
         # x is the batched input of size batch_size x input_dim
-        xn = x[:, 1:]  # xn is the non-monotonic input of size batch_size x (input_dim - 1)
-        decision_embed = self.decision_embed(xn)
+        # decision_embed (of size batch_size x (input_dim - 1)) is results after passing non-monotonic input through an MLP
 
         if self.use_mlp:
-            mlp_output = self.mlp_output(decision_embed)
+            mlp_out = getattr(self, 'mlp_output')(decision_embed)
 
         for i, consequent in enumerate(self.consequents):
-            pre_activated_modification = self.rho * x[:, 0] if self.use_mpav else 0
+            pre_activated_modification = torch.abs(self.rho) * x[:, 0] if self.use_mpav else 0
             if self.negate_consequents[i]:
                 pre_activated_modification = -pre_activated_modification
 
             if self.use_mlp:
-                self.mid_output[consequent] = torch.sigmoid(mlp_output[:, i] + pre_activated_modification)
+                self.mid_output[consequent] = torch.sigmoid(mlp_out[:, i] + pre_activated_modification)
             elif self.use_lattice:
                 self.mid_output[consequent] = torch.sigmoid(
-                    torch.squeeze(getattr(self, f"l{i}")(x, decision_embed)) + pre_activated_modification)
+                    torch.squeeze(getattr(self, f"l{i}")(x, decision_embed), dim=1) + pre_activated_modification)
 
     def apply_hard_rule(self, x):
+        x, decision_embed = x
         # x is the batched input of size batch_size x input_dim
         for consequent in self.consequents:
             self.mid_output[consequent] = x[:, 0]
@@ -646,7 +658,7 @@ class ComparisonOp(Predicate):
         return (term > self.threshold).int() if self.is_gt else (term < self.threshold).int()
 
     @property
-    def delta_loss(self):
+    def delta_loss(self) -> torch.Tensor:
         return self.delta * self.delta
 
 

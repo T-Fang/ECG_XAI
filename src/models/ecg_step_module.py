@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-from src.basic.constants import N_LEADS, LEAD_TO_INDEX, ALL_LEADS, SIGNAL_LEN, LPR_THRESH, LQRS_THRESH
-from src.basic.rule_ml import And, StepModule, Imply, GT, Not
+from src.basic.constants import AGE_OLD_THRESH, AXIS_LEADS, BLOCK_LEADS, BRAD_THRESH, DEEP_S_THRESH, DOM_R_THRESH, DOM_S_THRESH, INVT_THRESH, LP_THRESH_II, LQRS_WPW_THRESH, LVH_L1_OLD_THRESH, LVH_L1_YOUNG_THRESH, LVH_L2_FEMALE_THRESH, LVH_L2_MALE_THRESH, N_LEADS, LEAD_TO_INDEX, ALL_LEADS, P_LEADS, PEAK_P_THRESH_II, PEAK_P_THRESH_V1, PEAK_R_THRESH, POS_QRS_THRESH, Q_AMP_THRESH, Q_DUR_THRESH, RHYTHM_LEADS, SARRH_THRESH, SIGNAL_LEN, LPR_THRESH, LQRS_THRESH, SPR_THRESH, STD_LEADS, STD_THRESH, STE_THRESH, T_LEADS, TACH_THRESH, VH_LEADS  # noqa: E501
+from src.basic.rule_ml import LT, And, Or, StepModule, Imply, GT, Not, ComparisonOp
 from src.basic.dx_and_feat import Diagnosis, Feature, get_by_str
 
 
@@ -14,42 +14,186 @@ def calc_output_shape(length_in, kernel_size, stride=1, padding=0, dilation=1):
 
 class EcgStep(StepModule):
 
+    focused_leads: list[str] = ALL_LEADS
+    obj_feat_names: list[str] = []
+    feat_imp_names: list[str] = []
+    comp_op_names: list[str] = []  # names of comparison operators in this EcgStep
+    imply_names: list[str] = []  # names of imply modules in this EcgStep
+
+    # names of extra terms (other than feat impressions) to be aggregated such as NORM_imply and imply antecedents
+    extra_terms_to_agg: list[str] = []
+
+    # list of tuples, where each tuple is (dx_name, list_of_contributing_dx_imp)
+    # which respectively shows the name of a predicted diagnosis in this step
+    # and a list of names for diagnosis impression that will contribute to the prediction of this diagnosis
+    pred_dx_names: list[tuple[str, list[str]]] = []
+    NORM_if_NOT: list[str] = []  # names of diagnosis impression for all relevant CVDs in this step
+
+    def __init__(self,
+                 id: str,
+                 all_mid_output: dict[str, dict[str, torch.Tensor]],
+                 hparams: dict = {},
+                 is_using_hard_rule: bool = False):
+        super().__init__(id, all_mid_output, hparams, is_using_hard_rule)
+        self.init_focused_leads()
+
+        # * May be changed
+        self.loss_fn = nn.BCELoss()
+
+        # Common logic gates
+        self.NOT = Not(self)
+        self.AND = And(self)
+        self.OR = Or(self)
+
+    def init_focused_leads(self) -> None:
+        if EcgEmbed.__name__ in self.all_mid_output:
+            self.mid_output['focused_embed_dim'] = self.all_mid_output[EcgEmbed.__name__]['embed_dim_per_lead'] * len(
+                self.focused_leads)
+            self.mid_output['Imply_input_dim'] = 1 + self.mid_output['focused_embed_dim']
+
+    def get_mlp_embed_layer(self, hparams: dict) -> nn.Module:
+        # ! hparams['Imply'] should specify 'output_dims', and one of 'use_mpav' and 'lattice_sizes'
+        # * May change to other embedding layer other than MLP
+        layers = []
+        input_dim = self.mid_output['focused_embed_dim']
+        output_dims = hparams['Imply']['output_dims']
+        for output_dim in output_dims:
+            layers.append(nn.Linear(input_dim, output_dim))
+            layers.append(nn.ReLU())
+            layers.append(nn.BatchNorm1d(output_dim))
+            input_dim = output_dim
+
+        return nn.Sequential(*layers)
+
+    @property
+    def comp_ops(self) -> list[ComparisonOp]:
+        return [getattr(self, comp_op_name) for comp_op_name in self.comp_op_names]
+
+    @property
+    def imply_modules(self) -> list[Imply]:
+        return [getattr(self, imply_name) for imply_name in self.imply_names]
+
+    @property
+    def focused_leads_indices(self) -> list[int]:
+        return [LEAD_TO_INDEX[lead_name] for lead_name in self.focused_leads]
+
     def apply_rule(self, x) -> None:
         """
-        ! Every ECG step module should implement this method !
-
         Apply the rule of the current step to the input batch and save the mid output to the mid_output dict
         """
         raise NotImplementedError
 
     def get_NORM_imp(self) -> torch.Tensor | None:
         """
-        Get the NORM_imp of the current step using calculated mid_output
+        Get the NORM_imp of the current step using calculated mid_output.
+
+        Usually a patient is NORM w.r.t. this step if no CVD is detected in this step.
         """
-        return None
+        if not self.NORM_if_NOT:
+            return None
+        return self.AND([self.NOT(self.mid_output[cvd_imp_name]) for cvd_imp_name in self.NORM_if_NOT])
 
     def compute_loss(self, x) -> torch.Tensor:
         """
         Compute the loss of the current step for the input batch and return a dict of losses
-        
+
         e.g., ``return {'feat': 0, 'delta': 0}``
         """
-        loss = {'feat': 0, 'delta': 0}
+        if not self.obj_feat_names or not self.feat_imp_names:
+            return {'feat': 0, 'delta': 0}
+
+        batched_ecg, batched_obj_feat = x
+
+        # feat loss
+        objective_feat = get_by_str(batched_obj_feat, self.obj_feat_names, Feature)
+        feat_impressions = [self.mid_output[feat_imp_name] for feat_imp_name in self.feat_imp_names]
+        feat_impressions = torch.stack(feat_impressions, dim=1)
+        feat_loss = self.loss_fn(feat_impressions, objective_feat)
+
+        # delta loss
+        delta_loss = sum([comp_op.delta_loss for comp_op in self.comp_ops])
+
+        loss = {'feat': feat_loss, 'delta': delta_loss}
         return loss
 
-    def save_mid_output_to_agg(self) -> torch.Tensor:
+    def save_extra_terms_to_log(self) -> torch.Tensor:
         """
-        save the to-be-aggregated mid output to the mid_output dict
+        Save extra to-be-logged terms to the mid_output dict
         """
-        pass
+        # save delta, w, and rho
+        for comp_op_name in self.comp_op_names:
+            comp_op = getattr(self, comp_op_name)
+            self.mid_output[f'{comp_op_name}_delta'] = comp_op.delta
+            self.mid_output[f'{comp_op_name}_w'] = comp_op.w
+
+        for imply_name in self.imply_names:
+            imply_module = getattr(self, imply_name)
+            self.mid_output[f'{imply_name}_rho'] = imply_module.rho
 
     def forward(self, x) -> torch.Tensor:
         self.apply_rule(x)
         self.mid_output['NORM_imp'] = self.get_NORM_imp()
         loss = self.compute_loss(x)
         self.mid_output['loss'] = loss
-        self.save_mid_output_to_agg()
+        self.save_extra_terms_to_log()
         return loss
+
+    def get_imply_hparams(self, hparams: dict, consequents: list[str]) -> dict:
+        negate_consequents = [False] * len(consequents)
+        imply_hparams = {
+            **hparams['Imply'],
+            **{
+                'consequents': consequents,
+                'negate_consequents': negate_consequents,
+                'input_dim': self.mid_output['Imply_input_dim']
+            }
+        }
+        return imply_hparams
+
+    def get_focused_embed(self) -> torch.Tensor:
+        """
+        Get the embeddings for the focused leads and concatenate.
+
+        The resulting tensor will be part of the input for the all ``Imply`` modules.
+        """
+        embed = self.all_mid_output[EcgEmbed.__name__][
+            'embed']  # embed is of size batch_size x N_LEADS x embed_dim_per_lead
+        focused_embed = embed[:, self.focused_leads_indices, :]
+        focused_embed = focused_embed.flatten(start_dim=1)
+        return focused_embed
+
+    def cat_with(self, mid_output_name: str, focused_embed: torch.Tensor, is_negated: bool = False) -> torch.Tensor:
+        """
+        Concatenate desired mid_output with the focused embed, and negate the mid_output if needed.
+        """
+        mid_out = torch.unsqueeze(self.mid_output[mid_output_name], 1)
+        if is_negated:
+            mid_out = self.NOT(mid_out)
+        return torch.cat((mid_out, focused_embed), dim=1)
+
+    @property
+    def extra_loss_to_log(self) -> list[tuple[str, str]]:
+        return [(self.module_name, 'feat'), (self.module_name, 'delta')]
+
+    @property
+    def extra_terms_to_log(self) -> list[tuple[str, str]]:
+        # log delta, w, and rho
+        return [(self.module_name, f'{comp_op_name}_delta') for comp_op_name in self.comp_op_names] + \
+                [(self.module_name, f'{comp_op_name}_w') for comp_op_name in self.comp_op_names] + \
+                [(self.module_name, f'{imply_name}_rho') for imply_name in self.imply_names]
+
+    @property
+    def mid_output_to_agg(self) -> list[tuple[str, str]]:
+        # aggregating feature impressions and extra terms such as 'NORM_imp' and Imply's antecedents
+        return [(self.module_name, feat_imp_name) for feat_imp_name in self.feat_imp_names] + \
+                [(self.module_name, extra_term_name) for extra_term_name in self.extra_terms_to_agg]
+
+    @property
+    def dx_ensemble_dict(self) -> dict[str, list[tuple[str, str]]]:
+        ensemble_dict = {}
+        for pred_dx_name, dx_imp_list in self.pred_dx_names:
+            ensemble_dict[pred_dx_name] = [(self.module_name, dx_imp_name) for dx_imp_name in dx_imp_list]
+        return ensemble_dict
 
 
 class BasicCNN(EcgStep):
@@ -130,7 +274,6 @@ class EcgEmbed(EcgStep):
 
         conv_layers: list[nn.Module] = []
         fc_layers: list[nn.Module] = []
-        # TODO: 1dCNN + mlp (concatenate lead index before the embedding)
         cur_seq_len = SIGNAL_LEN  # current sequence length
         in_channels = 1
 
@@ -183,107 +326,688 @@ class EcgEmbed(EcgStep):
         self.mid_output['embed'] = embed
 
 
-class BlockModule(EcgStep):
+class RhythmModule(EcgStep):
+
+    focused_leads: list[str] = RHYTHM_LEADS
+    obj_feat_names: list[str] = ['BRAD', 'TACH']
+    feat_imp_names: list[str] = ['BRAD_imp', 'TACH_imp']
+    comp_op_names: list[str] = ['brad_lt', 'tach_gt', 'sarrh_gt']
+    imply_names: list[str] = ['ARR_imply', 'SBRAD_imply', 'STACH_imply', 'SR_imply']
+    extra_terms_to_agg: list[str] = ['NORM_imp', 'SBRAD_imply_atcd', 'STACH_imply_atcd', 'SR_imply_atcd']
+    pred_dx_names: list[tuple[str, list[str]]] = [('NORM', ['NORM_imp']), ('SARRH', ['SARRH_imp']),
+                                                  ('AFIB', ['AFIB_imp']), ('AFLT', ['AFLT_imp']),
+                                                  ('SBRAD', ['SBRAD_imp']), ('STACH', ['STACH_imp']),
+                                                  ('SR', ['SR_imp'])]
+    NORM_if_NOT: list[str] = ['AFIB_imp', 'AFLT_imp']
 
     def __init__(self, all_mid_output: dict[str, dict[str, torch.Tensor]], hparams, is_using_hard_rule: bool = False):
         super().__init__(self.module_name, all_mid_output, hparams, is_using_hard_rule)
-        self.loss_fn = nn.BCELoss()
-        self.pr_dur_gt = GT(self, 'LPR_imp', LPR_THRESH)
-        self.qrs_dur_gt = GT(self, 'LQRS_imp', LQRS_THRESH)
-        self.NOT = Not(self)
-        self.AND = And(self)
 
-        # input to imply is of shape (batch_size, 1 + feat_vec_len + embed_len)
-        self.focused_leads = hparams['focused_leads'] if 'focused_leads' in hparams else ['V1', 'V2', 'V5', 'V6']
-        self.focused_leads_indices = [LEAD_TO_INDEX[lead_name] for lead_name in self.focused_leads]
-        self.mid_output['imply_input_dim'] = 1 + self.all_mid_output[EcgEmbed.__name__]['embed_dim_per_lead'] * len(
-            self.focused_leads)
+        # Comparison operators
+        self.brad_lt = LT(self, 'BRAD_imp', BRAD_THRESH)
+        self.tach_gt = GT(self, 'TACH_imp', TACH_THRESH)
+        self.sarrh_gt = GT(self, 'SARRH_imp', SARRH_THRESH)
 
-        self.AVB_imply = Imply(self, hparams['AVB_imply'])
+        # Imply
+        self.imply_decision_embed_layer = self.get_mlp_embed_layer(self, hparams)
 
-        #    consequents=['AVB_imp'],
-        #    negate_consequents=[False],
-        #    input_dim=self.mid_output['imply_input_dim'],
-        #    output_dims=[128, 64],
-        #    lattice_inc_indices=[0],
-        #    lattice_sizes=[4]
-        self.BBB_imply = Imply(self, hparams['BBB_imply'])
-
-        #    consequents=['LBBB_imp', 'RBBB_imp'],
-        #    negate_consequents=[False, False],
-        #    input_dim=self.mid_output['imply_input_dim'],
-        #    output_dims=[128, 64],
-        #    use_mpav=True
+        self.ARR_imply = Imply(self, self.get_imply_hparams(hparams, ['AFIB_imp', 'AFLT_imp']))
+        self.SBRAD_imply = Imply(self, self.get_imply_hparams(hparams, ['SBRAD_imp']))
+        self.STACH_imply = Imply(self, self.get_imply_hparams(hparams, ['STACH_imp']))
+        self.SR_imply = Imply(self, self.get_imply_hparams(hparams, ['SR_imp']))
 
     def apply_rule(self, x) -> None:
         batched_ecg, batched_obj_feat = x
 
-        # Extract objective features
+        # Extract objective features: HR, SINUS, RR_DIFF
+        HR = get_by_str(batched_obj_feat, ['HR'], Feature)
+        SINUS = get_by_str(batched_obj_feat, ['SINUS'], Feature)
+        self.mid_output['SINUS'] = SINUS
+        RR_DIFF = get_by_str(batched_obj_feat, ['RR_DIFF'], Feature)
+
+        # Comparison operators
+        self.brad_lt(HR)  # HR < 60 bpm
+        self.tach_gt(HR)  # HR > 100 bpm
+        self.sarrh_gt(RR_DIFF)  # RR_DIFF > 120 ms
+
+        # Imply
+        focused_embed = self.get_focused_embed()
+        decision_embed = self.imply_decision_embed_layer(focused_embed)
+
+        # ~SINUS -> AFIB_imp ∧ AFLT_imp
+        self.ARR_imply((self.cat_with('SINUS', focused_embed, True), decision_embed))
+
+        # SINUS ∧ ~SARRH_imp ∧ BRAD_imp -> SBRAD_imp
+        self.mid_output['SBRAD_imply_atcd'] = self.AND(
+            [self.mid_output['SINUS'],
+             self.NOT(self.mid_output['SARRH_imp']), self.mid_output['BRAD_imp']])
+        self.SBRAD_imply((self.cat_with('SBRAD_imply_atcd', focused_embed), decision_embed))
+
+        # SINUS ∧ ~SARRH_imp ∧ TACH_imp -> STACH_imp
+        self.mid_output['STACH_imply_atcd'] = self.AND(
+            [self.mid_output['SINUS'],
+             self.NOT(self.mid_output['SARRH_imp']), self.mid_output['TACH_imp']])
+        self.STACH_imply((self.cat_with('STACH_imply_atcd', focused_embed), decision_embed))
+
+        # SINUS ∧ ~SARRH_imp ∧ ~SBRAD_imp ∧ ~STACH_imp -> SR_imp
+        self.mid_output['SR_imply_atcd'] = self.AND([
+            self.mid_output['SINUS'],
+            self.NOT(self.mid_output['SARRH_imp']),
+            self.NOT(self.mid_output['SBRAD_imp']),
+            self.NOT(self.mid_output['STACH_imp'])
+        ])
+        self.SR_imply((self.cat_with('SR_imply_atcd', focused_embed), decision_embed))
+
+
+class BlockModule(EcgStep):
+
+    focused_leads: list[str] = BLOCK_LEADS
+    obj_feat_names: list[str] = ['LPR', 'LQRS']
+    feat_imp_names: list[str] = ['LPR_imp', 'LQRS_imp']
+    comp_op_names: list[str] = ['lpr_gt', 'lqrs_gt']
+    imply_names: list[str] = ['AVB_imply', 'BBB_imply_Block']
+    extra_terms_to_agg: list[str] = ['NORM_imp', 'LBBB_imp_Block', 'RBBB_imp_Block']
+    pred_dx_names: list[tuple[str, list[str]]] = [('NORM', ['NORM_imp']), ('AVB', ['AVB_imp']),
+                                                  ('LBBB', ['LBBB_imp_Block']), ('RBBB', ['RBBB_imp_Block'])]
+    NORM_if_NOT: list[str] = ['AVB_imp', 'LBBB_imp_Block', 'RBBB_imp_Block']
+
+    def __init__(self, all_mid_output: dict[str, dict[str, torch.Tensor]], hparams, is_using_hard_rule: bool = False):
+        super().__init__(self.module_name, all_mid_output, hparams, is_using_hard_rule)
+
+        # Comparison operators
+        self.lpr_gt = GT(self, 'LPR_imp', LPR_THRESH)
+        self.lqrs_gt = GT(self, 'LQRS_imp', LQRS_THRESH)
+
+        # Imply
+        self.imply_decision_embed_layer = self.get_mlp_embed_layer(self, hparams)
+        self.AVB_imply = Imply(self, self.get_imply_hparams(hparams, ['AVB_imp']))
+        self.BBB_imply_Block = Imply(self, self.get_imply_hparams(hparams, ['LBBB_imp_Block', 'RBBB_imp_Block']))
+
+    def apply_rule(self, x) -> None:
+        batched_ecg, batched_obj_feat = x
+
+        # Extract objective features: PR_DUR, QRS_DUR
         PR_DUR = get_by_str(batched_obj_feat, ['PR_DUR'], Feature)
         QRS_DUR = get_by_str(batched_obj_feat, ['QRS_DUR'], Feature)
 
-        # Apply rules such as logic and update the mid_output
-        self.pr_dur_gt(PR_DUR)  # PR_DUR > 200
-        self.qrs_dur_gt(QRS_DUR)  # QRS_DUR > 120
+        # Comparison operators
+        self.lpr_gt(PR_DUR)  # PR_DUR > 200
+        self.lqrs_gt(QRS_DUR)  # QRS_DUR > 120
 
-        # Assemble input for the all Imply
-        embed = self.all_mid_output[EcgEmbed.__name__][
-            'embed']  # embed is of size batch_size x N_LEADS x embed_dim_per_lead
-        focused_embed = embed[:, self.focused_leads_indices, :]
-        common_imply_input = focused_embed.flatten(start_dim=1)
+        # Imply
+        focused_embed = self.get_focused_embed()
+        decision_embed = self.imply_decision_embed_layer(focused_embed)
 
-        AVB_imply_input = torch.cat((torch.unsqueeze(self.mid_output['LPR_imp'], 1), common_imply_input), dim=1)
-        self.AVB_imply(AVB_imply_input)  # LPR_imp -> AVB_imp
+        # LPR_imp -> AVB_imp
+        self.AVB_imply((self.cat_with('LPR_imp', focused_embed), decision_embed))
 
-        BBB_imply_input = torch.cat((torch.unsqueeze(self.mid_output['LQRS_imp'], 1), common_imply_input), dim=1)
-        self.BBB_imply(BBB_imply_input)  # LQRS_imp -> LBBB_imp ∧ RBBB_imp
+        # LQRS_imp -> LBBB_imp_Block ∧ RBBB_imp_Block
+        self.BBB_imply_Block((self.cat_with('LQRS_imp', focused_embed), decision_embed))
 
-    def get_NORM_imp(self) -> torch.Tensor | None:
-        return self.AND([
-            self.NOT(self.mid_output['AVB_imp']),
-            self.NOT(self.mid_output['LBBB_imp']),
-            self.NOT(self.mid_output['RBBB_imp'])
-        ])
 
-    def compute_loss(self, x) -> torch.Tensor:
+class WPWModule(EcgStep):
+
+    focused_leads: list[str] = ALL_LEADS
+    obj_feat_names: list[str] = ['LQRS_WPW', 'SPR']
+    feat_imp_names: list[str] = ['LQRS_WPW_imp', 'SPR_imp']
+    comp_op_names: list[str] = ['lqrs_wpw_gt', 'spr_lt']
+    imply_names: list[str] = ['WPW_imply', 'IVCD_imply']
+    extra_terms_to_agg: list[str] = ['NORM_imp', 'WPW_imply_atcd', 'IVCD_imply_atcd']
+    pred_dx_names: list[tuple[str, list[str]]] = [('NORM', ['NORM_imp']), ('WPW', ['WPW_imp']), ('IVCD', ['IVCD_imp'])]
+    NORM_if_NOT: list[str] = ['WPW_imp', 'IVCD_imp']
+
+    def __init__(self, all_mid_output: dict[str, dict[str, torch.Tensor]], hparams, is_using_hard_rule: bool = False):
+        super().__init__(self.module_name, all_mid_output, hparams, is_using_hard_rule)
+
+        # Comparison operators
+        self.lqrs_wpw_gt = GT(self, 'LQRS_WPW_imp', LQRS_WPW_THRESH)
+        self.spr_lt = LT(self, 'SPR_imp', SPR_THRESH)
+
+        # Imply
+        self.imply_decision_embed_layer = self.get_mlp_embed_layer(self, hparams)
+        self.WPW_imply = Imply(self, self.get_imply_hparams(hparams, ['WPW_imp']))
+        self.IVCD_imply = Imply(self, self.get_imply_hparams(hparams, ['IVCD_imp']))
+
+    def apply_rule(self, x) -> None:
         batched_ecg, batched_obj_feat = x
-        LPR = get_by_str(batched_obj_feat, ['LPR'], Feature)
-        LQRS = get_by_str(batched_obj_feat, ['LQRS'], Feature)
-        objective_feat = torch.stack((LPR, LQRS), dim=1)
-        feat_impressions = torch.stack((self.mid_output['LPR_imp'], self.mid_output['LQRS_imp']), dim=1)
-        feat_loss = self.loss_fn(feat_impressions, objective_feat)
-        delta_loss = self.pr_dur_gt.delta_loss + self.qrs_dur_gt.delta_loss
-        loss = {'feat': feat_loss, 'delta': delta_loss}
-        return loss
 
-    def save_mid_output_to_agg(self) -> torch.Tensor:
-        # save delta, w, and rho
-        self.mid_output['pr_dur_gt_delta'] = self.pr_dur_gt.delta
-        self.mid_output['pr_dur_gt_w'] = self.pr_dur_gt.w
-        self.mid_output['qrs_dur_gt_delta'] = self.qrs_dur_gt.delta
-        self.mid_output['qrs_dur_gt_w'] = self.qrs_dur_gt.w
-        self.mid_output['AVB_imply_rho'] = self.AVB_imply.rho
-        self.mid_output['BBB_imply_rho'] = self.BBB_imply.rho
+        # Extract objective features: PR_DUR, QRS_DUR
+        PR_DUR = get_by_str(batched_obj_feat, ['PR_DUR'], Feature)
+        QRS_DUR = get_by_str(batched_obj_feat, ['QRS_DUR'], Feature)
 
-    @property
-    def extra_loss_to_log(self) -> list[tuple[str, str]]:
-        return [(self.module_name, 'feat'), (self.module_name, 'delta')]
+        # Comparison operators
+        self.lqrs_wpw_gt(QRS_DUR)  # QRS_DUR > 110
+        self.spr_lt(PR_DUR)  # PR_DUR < 120
 
-    @property
-    def extra_terms_to_log(self) -> list[tuple[str, str]]:
-        # log delta, w, and rho
-        return [(self.module_name, 'pr_dur_gt_delta'), (self.module_name, 'pr_dur_gt_w'),
-                (self.module_name, 'qrs_dur_gt_delta'), (self.module_name, 'qrs_dur_gt_w'),
-                (self.module_name, 'AVB_imply_rho'), (self.module_name, 'BBB_imply_rho')]
+        # Imply
+        focused_embed = self.get_focused_embed()
+        decision_embed = self.imply_decision_embed_layer(focused_embed)
 
-    @property
-    def mid_output_to_agg(self) -> list[tuple[str, str]]:
-        return [(self.module_name, 'LPR_imp'), (self.module_name, 'LQRS_imp')]
+        # ~LBBB_imp_Block ∧ ~RBBB_imp_Block ∧ SPR_imp -> WPW_imp
+        self.mid_output['WPW_imply_atcd'] = self.AND([
+            self.NOT(self.all_mid_output[BlockModule.__name__]['LBBB_imp_Block']),
+            self.NOT(self.all_mid_output[BlockModule.__name__]['RBBB_imp_Block']), self.mid_output['SPR_imp']
+        ])
+        self.WPW_imply((self.cat_with('WPW_imply_atcd', focused_embed), decision_embed))
 
-    @property
-    def dx_ensemble_dict(self) -> dict[str, list[tuple[str, str]]]:
-        return {
-            'AVB': [(self.module_name, 'AVB_imp')],
-            'LBBB': [(self.module_name, 'LBBB_imp')],
-            'RBBB': [(self.module_name, 'RBBB_imp')]
-        }
+        # ~LBBB_imp_Block ∧ ~RBBB_imp_Block ∧ ~WPW_imp -> IVCD_imp
+        self.mid_output['IVCD_imply_atcd'] = self.AND([
+            self.NOT(self.all_mid_output[BlockModule.__name__]['LBBB_imp_Block']),
+            self.NOT(self.all_mid_output[BlockModule.__name__]['RBBB_imp_Block']),
+            self.NOT(self.mid_output['WPW_imp'])
+        ])
+        self.IVCD_imply((self.cat_with('IVCD_imply_atcd', focused_embed), decision_embed))
+
+
+class STModule(EcgStep):
+    focused_leads: list[str] = ALL_LEADS
+    obj_feat_names: list[str] = [f'STE_{lead}' for lead in ALL_LEADS] + [f'STD_{lead}' for lead in STD_LEADS]
+    feat_imp_names: list[str] = [f'STE_{lead}_imp' for lead in ALL_LEADS] + [f'STD_{lead}_imp' for lead in STD_LEADS]
+    comp_op_names: list[str] = [f'ste_{lead}_gt' for lead in ALL_LEADS] + [f'std_{lead}_lt' for lead in STD_LEADS]
+    imply_names: list[str] = [
+        'IMI_imply_STE', 'IMI_imply_STD', 'AMI_imply_STE', 'AMI_LMI_imply_STD', 'LMI_imply_STE', 'LVH_imply_STD',
+        'RVH_imply_STD'
+    ]
+    extra_terms_to_agg: list[str] = [
+        'NORM_imp', 'IMI_imp_STE', 'IMI_imp_STD', 'AMI_imp_STE', 'AMI_imp_STD', 'LMI_imp_STE', 'LMI_imp_STD',
+        'LVH_imp_STD', 'RVH_imp_STD', 'IMI_imply_STE_atcd', 'AMI_imply_STE_atcd', 'AMI_LMI_imply_STD_atcd',
+        'LMI_imply_STE_atcd', 'LVH_imply_STD_atcd', 'RVH_imply_STD_atcd'
+    ]
+    pred_dx_names: list[tuple[str, list[str]]] = [('NORM', ['NORM_imp']), ('IMI', ['IMI_imp_STE', 'IMI_imp_STD']),
+                                                  ('AMI', ['AMI_imp_STE', 'AMI_imp_STD']),
+                                                  ('LMI', ['LMI_imp_STE', 'LMI_imp_STD']), ('LVH', ['LVH_imp_STD']),
+                                                  ('RVH', ['RVH_imp_STD'])]
+    NORM_if_NOT: list[str] = [
+        'IMI_imp_STE', 'IMI_imp_STD', 'AMI_imp_STE', 'AMI_imp_STD', 'LMI_imp_STE', 'LMI_imp_STD', 'LVH_imp_STD',
+        'RVH_imp_STD'
+    ]
+
+    def __init__(self, all_mid_output: dict[str, dict[str, torch.Tensor]], hparams, is_using_hard_rule: bool = False):
+        super().__init__(self.module_name, all_mid_output, hparams, is_using_hard_rule)
+
+        self.GOR = Or(self, 2)
+        # Comparison operators
+        for lead in ALL_LEADS:
+            self.add_module(f'ste_{lead}_gt', GT(self, f'STE_{lead}_imp', STE_THRESH))
+        for lead in STD_LEADS:
+            self.add_module(f'std_{lead}_lt', LT(self, f'STD_{lead}_imp', STD_THRESH))
+
+        # Imply
+        self.imply_decision_embed_layer = self.get_mlp_embed_layer(self, hparams)
+        self.IMI_imply_STE = Imply(self, self.get_imply_hparams(hparams, ['IMI_imp_STE']))
+        self.AMI_imply_STE = Imply(self, self.get_imply_hparams(hparams, ['AMI_imp_STE']))
+        self.LMI_imply_STE = Imply(self, self.get_imply_hparams(hparams, ['LMI_imp_STE']))
+
+        # * Ancillary criteria
+        self.IMI_imply_STD = Imply(self, self.get_imply_hparams(hparams, ['IMI_imp_STD']))
+        self.AMI_LMI_imply_STD = Imply(self, self.get_imply_hparams(hparams, ['AMI_imp_STD', 'LMI_imp_STD']))
+
+        self.LVH_imply_STD = Imply(self, self.get_imply_hparams(hparams, ['LVH_imp_STD']))
+        self.RVH_imply_STD = Imply(self, self.get_imply_hparams(hparams, ['RVH_imp_STD']))
+
+    def apply_rule(self, x) -> None:
+        batched_ecg, batched_obj_feat = x
+
+        # Extract objective features: ST_AMP
+        ST_AMP = get_by_str(batched_obj_feat, [f'ST_AMP_{lead}' for lead in ALL_LEADS],
+                            Feature)  # shape: (batch_size, N_LEADS)
+
+        # Comparison operators
+        for lead in ALL_LEADS:
+            getattr(self, f'ste_{lead}_gt')(ST_AMP[:, LEAD_TO_INDEX[lead]])  # STE_AMP > 0.1 mV
+
+        for lead in STD_LEADS:
+            getattr(self, f'std_{lead}_lt')(ST_AMP[:, LEAD_TO_INDEX[lead]])
+
+        # Imply
+        focused_embed = self.get_focused_embed()
+        decision_embed = self.imply_decision_embed_layer(focused_embed)
+
+        # GOR([STE_II_imp, STE_III_imp, STE_aVF_imp], 2) -> IMI_imp_STE
+        self.mid_output['IMI_imply_STE_atcd'] = self.GOR(
+            [self.mid_output['STE_II_imp'], self.mid_output['STE_III_imp'], self.mid_output['STE_aVF_imp']])
+        self.IMI_imply_STE((self.cat_with('IMI_imply_STE_atcd', focused_embed), decision_embed))
+
+        # (STE_V1_imp ∧ STE_V2_imp) ∨ (STE_V2_imp ∧ STE_V3_imp) ∨ ... ∨ (STE_V5_imp ∧ STE_V6_imp) -> AMI_imp_STE
+        self.mid_output['AMI_imply_STE_atcd'] = self.OR([
+            self.AND([self.mid_output['STE_V1_imp'], self.mid_output['STE_V2_imp']]),
+            self.AND([self.mid_output['STE_V2_imp'], self.mid_output['STE_V3_imp']]),
+            self.AND([self.mid_output['STE_V3_imp'], self.mid_output['STE_V4_imp']]),
+            self.AND([self.mid_output['STE_V4_imp'], self.mid_output['STE_V5_imp']]),
+            self.AND([self.mid_output['STE_V5_imp'], self.mid_output['STE_V6_imp']])
+        ])
+        self.AMI_imply_STE((self.cat_with('AMI_imply_STE_atcd', focused_embed), decision_embed))
+
+        # GOR([STE_I_imp, STE_aVL_imp, STE_V5_imp, STE_V6_imp], 2) -> LMI_imp_STE
+        self.mid_output['LMI_imply_STE_atcd'] = self.GOR([
+            self.mid_output['STE_I_imp'], self.mid_output['STE_aVL_imp'], self.mid_output['STE_V5_imp'],
+            self.mid_output['STE_V6_imp']
+        ])
+        self.LMI_imply_STE((self.cat_with('LMI_imply_STE_atcd', focused_embed), decision_embed))
+
+        # * Ancillary criteria
+        # STD_aVL_imp -> IMI_imp_STD
+        self.IMI_imply_STD((self.cat_with('STD_aVL_imp', focused_embed), decision_embed))
+
+        # STD_II_imp ∨ STD_III_imp ∨ STD_aVF_imp -> AMI_imp_STD ∧ LMI_imp_STD
+        self.mid_output['AMI_LMI_imply_STD_atcd'] = self.OR(
+            [self.mid_output['STD_II_imp'], self.mid_output['STD_III_imp'], self.mid_output['STD_aVF_imp']])
+        self.AMI_LMI_imply_STD((self.cat_with('AMI_LMI_imply_STD_atcd', focused_embed), decision_embed))
+
+        # STD_V5_imp ∨ STD_V6_imp -> LVH_imp_STD
+        self.mid_output['LVH_imply_STD_atcd'] = self.OR([self.mid_output['STD_V5_imp'], self.mid_output['STD_V6_imp']])
+        self.LVH_imply_STD((self.cat_with('LVH_imply_STD_atcd', focused_embed), decision_embed))
+
+        # STD_V1_imp ∨ STD_V2_imp ∨ STD_V3_imp -> RVH_imp_STD
+        self.mid_output['RVH_imply_STD_atcd'] = self.OR(
+            [self.mid_output['STD_V1_imp'], self.mid_output['STD_V2_imp'], self.mid_output['STD_V3_imp']])
+        self.RVH_imply_STD((self.cat_with('RVH_imply_STD_atcd', focused_embed), decision_embed))
+
+
+class QRModule(EcgStep):
+    focused_leads: list[str] = ALL_LEADS
+    obj_feat_names: list[str] = [f'PATH_Q_{lead}' for lead in ALL_LEADS]
+    feat_imp_names: list[str] = [f'PATH_Q_{lead}_imp' for lead in ALL_LEADS]
+    comp_op_names: list[str] = [f'lq_{lead}_gt' for lead in ALL_LEADS] + [f'deep_q_{lead}_lt' for lead in ALL_LEADS]
+    imply_names: list[str] = ['PRWP_imply', 'IMI_imply_Q', 'AMI_imply_Q', 'LMI_imply_Q']
+    extra_terms_to_agg: list[str] = [
+        'NORM_imp', 'AMI_imp_PRWP', 'LVH_imp_PRWP', 'LBBB_imp_PRWP', 'IMI_imp_Q', 'AMI_imp_Q', 'LMI_imp_Q',
+        'IMI_imply_Q_atcd', 'AMI_imply_Q_atcd', 'LMI_imply_Q_atcd'
+    ]
+    pred_dx_names: list[tuple[str, list[str]]] = [('NORM', ['NORM_imp']), ('LVH', ['LVH_imp_PRWP']),
+                                                  ('LBBB', ['LBBB_imp_PRWP']), ('IMI', ['IMI_imp_Q']),
+                                                  ('AMI', ['AMI_imp_Q', 'AMI_imp_PRWP']), ('LMI', ['LMI_imp_Q'])]
+    NORM_if_NOT: list[str] = ['AMI_imp_PRWP', 'LVH_imp_PRWP', 'LBBB_imp_PRWP', 'IMI_imp_Q', 'AMI_imp_Q', 'LMI_imp_Q']
+
+    def __init__(self, all_mid_output: dict[str, dict[str, torch.Tensor]], hparams, is_using_hard_rule: bool = False):
+        super().__init__(self.module_name, all_mid_output, hparams, is_using_hard_rule)
+
+        self.GOR = Or(self, 2)
+        # Comparison operators
+        for lead in ALL_LEADS:
+            self.add_module(f'lq_{lead}_gt', GT(self, f'LQ_{lead}_imp', Q_DUR_THRESH))
+        for lead in ALL_LEADS:
+            self.add_module(f'deep_q_{lead}_lt', LT(self, f'DEEP_Q_{lead}_imp', Q_AMP_THRESH[lead]))
+
+        # Imply
+        self.imply_decision_embed_layer = self.get_mlp_embed_layer(self, hparams)
+
+        # * Ancillary criteria
+        self.PRWP_imply = Imply(self, self.get_imply_hparams(hparams,
+                                                             ['AMI_imp_PRWP', 'LVH_imp_PRWP', 'LBBB_imp_PRWP']))
+        self.IMI_imply_Q = Imply(self, self.get_imply_hparams(hparams, ['IMI_imp_Q']))
+        self.AMI_imply_Q = Imply(self, self.get_imply_hparams(hparams, ['AMI_imp_Q']))
+        self.LMI_imply_Q = Imply(self, self.get_imply_hparams(hparams, ['LMI_imp_Q']))
+
+    def apply_rule(self, x) -> None:
+        batched_ecg, batched_obj_feat = x
+
+        # Extract objective features: Q_DUR, Q_AMP, and PRWP
+
+        Q_DUR = get_by_str(batched_obj_feat, [f'Q_DUR_{lead}' for lead in ALL_LEADS], Feature)
+        # shape: (batch_size, N_LEADS)
+        Q_AMP = get_by_str(batched_obj_feat, [f'Q_AMP_{lead}' for lead in ALL_LEADS], Feature)
+        PRWP = get_by_str(batched_obj_feat, ['PRWP'], Feature)
+        self.mid_output['PRWP'] = PRWP
+
+        # Comparison operators
+        for lead in ALL_LEADS:
+            getattr(self, f'lq_{lead}_gt')(Q_DUR[:, LEAD_TO_INDEX[lead]])
+            getattr(self, f'deep_q_{lead}_lt')(Q_AMP[:, LEAD_TO_INDEX[lead]])
+
+        # Get PATH_Q_{lead}_imp for all leads: PATH_Q_{lead}_imp = LQ_{lead}_imp ∨ DEEP_Q_{lead}_imp
+        for lead in ALL_LEADS:
+            self.mid_output[f'PATH_Q_{lead}_imp'] = self.OR(
+                [self.mid_output[f'LQ_{lead}_imp'], self.mid_output[f'DEEP_Q_{lead}_imp']])
+
+        # Imply
+        focused_embed = self.get_focused_embed()
+        decision_embed = self.imply_decision_embed_layer(focused_embed)
+
+        # PRWP -> AMI_imp_PRWP ∧ LVH_imp_PRWP ∧ LBBB_imp_PRWP
+        self.PRWP_imply((self.cat_with('PRWP', focused_embed), decision_embed))
+
+        # PATH_Q_II_imp ∨ PATH_Q_III_imp ∨ PATH_Q_aVF_imp -> IMI_imp_Q
+        self.mid_output['IMI_imply_Q_atcd'] = self.OR(
+            [self.mid_output['PATH_Q_II_imp'], self.mid_output['PATH_Q_III_imp'], self.mid_output['PATH_Q_aVF_imp']])
+        self.IMI_imply_Q((self.cat_with('IMI_imply_Q_atcd', focused_embed), decision_embed))
+
+        # PATH_Q_I_imp ∨ PATH_Q_aVL_imp ∨ PATH_Q_V5_imp ∨ PATH_Q_V6_imp -> LMI_imp_Q
+        self.mid_output['LMI_imply_Q_atcd'] = self.OR([
+            self.mid_output['PATH_Q_I_imp'], self.mid_output['PATH_Q_aVL_imp'], self.mid_output['PATH_Q_V5_imp'],
+            self.mid_output['PATH_Q_V6_imp']
+        ])
+        self.LMI_imply_Q((self.cat_with('LMI_imply_Q_atcd', focused_embed), decision_embed))
+
+        # PATH_Q_V1_imp ∨ PATH_Q_V2_imp ∨ PATH_Q_V3_imp ∨ PATH_Q_V4_imp -> AMI_imp_Q
+        self.mid_output['AMI_imply_Q_atcd'] = self.OR([
+            self.mid_output['PATH_Q_V1_imp'], self.mid_output['PATH_Q_V2_imp'], self.mid_output['PATH_Q_V3_imp'],
+            self.mid_output['PATH_Q_V4_imp']
+        ])
+        self.AMI_imply_Q((self.cat_with('AMI_imply_Q_atcd', focused_embed), decision_embed))
+
+
+class PModule(EcgStep):
+
+    focused_leads: list[str] = P_LEADS
+    obj_feat_names: list[str] = ['LP_II', 'PEAK_P_II', 'PEAK_P_V1']
+    feat_imp_names: list[str] = ['LP_II_imp', 'PEAK_P_II_imp', 'PEAK_P_V1_imp']
+    comp_op_names: list[str] = [
+        'lp_II_gt',
+        'peak_p_II_gt',
+        'peak_p_V1_gt',
+    ]
+    imply_names: list[str] = ['LAE_imply', 'RAE_imply', 'LVH_imply_P', 'RVH_imply_P']
+    extra_terms_to_agg: list[str] = ['NORM_imp', 'RAE_imply_atcd', 'LVH_imply_P_atcd', 'RVH_imply_P_atcd']
+    pred_dx_names: list[tuple[str, list[str]]] = [('NORM', ['NORM_imp']), ('LAE', ['LAE_imp']), ('RAE', ['RAE_imp']),
+                                                  ('LVH', ['LVH_imp_P']), ('RVH', ['RVH_imp_P'])]
+    NORM_if_NOT: list[str] = ['LAE_imp', 'RAE_imp', 'LVH_imp_P', 'RVH_imp_P']
+
+    def __init__(self, all_mid_output: dict[str, dict[str, torch.Tensor]], hparams, is_using_hard_rule: bool = False):
+        super().__init__(self.module_name, all_mid_output, hparams, is_using_hard_rule)
+
+        # Comparison operators
+        self.lp_II_gt = GT(self, 'LP_II_imp', LP_THRESH_II)
+        self.peak_p_II_gt = GT(self, 'PEAK_P_II_imp', PEAK_P_THRESH_II)
+        self.peak_p_V1_gt = GT(self, 'PEAK_P_V1_imp', PEAK_P_THRESH_V1)
+
+        # Imply
+        self.imply_decision_embed_layer = self.get_mlp_embed_layer(self, hparams)
+        self.LAE_imply = Imply(self, self.get_imply_hparams(hparams, ['LAE_imp']))
+        self.RAE_imply = Imply(self, self.get_imply_hparams(hparams, ['RAE_imp']))
+
+        # * Ancillary criteria
+        self.LVH_imply_P = Imply(self, self.get_imply_hparams(hparams, ['LVH_imp_P']))
+        self.RVH_imply_P = Imply(self, self.get_imply_hparams(hparams, ['RVH_imp_P']))
+
+    def apply_rule(self, x) -> None:
+        batched_ecg, batched_obj_feat = x
+
+        # Extract objective features: P_DUR_II, P_AMP_II, P_AMP_V1
+        P_DUR_II = get_by_str(batched_obj_feat, ['P_DUR_II'], Feature)
+        P_AMP_II = get_by_str(batched_obj_feat, ['P_AMP_II'], Feature)
+        P_AMP_V1 = get_by_str(batched_obj_feat, ['P_AMP_V1'], Feature)
+
+        # Comparison operators
+        self.lp_II_gt(P_DUR_II)  # P_DUR_II > 110
+        self.peak_p_II_gt(P_AMP_II)  # P_AMP_II > 0.25
+        self.peak_p_V1_gt(P_AMP_V1)  # P_AMP_V1 > 0.15
+
+        # Imply
+        focused_embed = self.get_focused_embed()
+        decision_embed = self.imply_decision_embed_layer(focused_embed)
+
+        # LP_II_imp -> LAE_imp
+        self.LAE_imply((self.cat_with('LP_II_imp', focused_embed), decision_embed))
+
+        # PEAK_P_II_imp ∨ PEAK_P_V1_imp -> RAE_imp
+        self.mid_output['RAE_imply_atcd'] = self.OR(
+            [self.mid_output['PEAK_P_II_imp'], self.mid_output['PEAK_P_V1_imp']])
+        self.RAE_imply((self.cat_with('RAE_imply_atcd', focused_embed), decision_embed))
+
+        # * Ancillary criteria
+        # LAE_imp -> LVH_imp_P
+        self.LVH_imply_P((self.cat_with('LAE_imp', focused_embed), decision_embed))
+
+        # RAE_imp -> RVH_imp_P
+        self.RVH_imply_P((self.cat_with('RAE_imp', focused_embed), decision_embed))
+
+
+class VHModule(EcgStep):
+
+    focused_leads: list[str] = VH_LEADS
+    obj_feat_names: list[str] = [
+        'AGE_OLD', 'LVH_L1_OLD', 'LVH_L1_YOUNG', 'LVH_L2_MALE', 'LVH_L2_FEMALE', 'PEAK_R_V1', 'DEEP_S_V5', 'DEEP_S_V6',
+        'DOM_R_V1', 'DOM_S_V5', 'DOM_S_V6'
+    ]
+    feat_imp_names: list[str] = [
+        'AGE_OLD_imp', 'LVH_L1_OLD_imp', 'LVH_L1_YOUNG_imp', 'LVH_L2_MALE_imp', 'LVH_L2_FEMALE_imp', 'PEAK_R_V1_imp',
+        'DEEP_S_V5_imp', 'DEEP_S_V6_imp', 'DOM_R_V1_imp', 'DOM_S_V5_imp', 'DOM_S_V6_imp'
+    ]
+    comp_op_names: list[str] = [
+        'age_old_gt', 'lvh_l1_old_gt', 'lvh_l1_young_gt', 'lvh_l2_male_gt', 'lvh_l2_female_gt', 'peak_r_v1_gt',
+        'deep_s_v5_gt', 'deep_s_v6_gt', 'dom_r_v1_gt', 'dom_s_v5_lt', 'dom_s_v6_lt'
+    ]
+    imply_names: list[str] = ['LVH_imply_VH', 'RVH_imply_VH']
+    extra_terms_to_agg: list[str] = ['NORM_imp', 'LVH_imply_VH_atcd', 'RVH_imply_VH_atcd']
+    pred_dx_names: list[tuple[str, list[str]]] = [('NORM', ['NORM_imp']), ('LVH', ['LVH_imp_VH']),
+                                                  ('RVH', ['RVH_imp_VH'])]
+    NORM_if_NOT: list[str] = ['LVH_imp_VH', 'RVH_imp_VH']
+
+    def __init__(self, all_mid_output: dict[str, dict[str, torch.Tensor]], hparams, is_using_hard_rule: bool = False):
+        super().__init__(self.module_name, all_mid_output, hparams, is_using_hard_rule)
+        self.GOR = Or(self, 2)
+
+        # Comparison operators
+        self.age_old_gt = GT(self, 'AGE_OLD_imp', AGE_OLD_THRESH)
+        self.lvh_l1_old_gt = GT(self, 'LVH_L1_OLD_imp', LVH_L1_OLD_THRESH)
+        self.lvh_l1_young_gt = GT(self, 'LVH_L1_YOUNG_imp', LVH_L1_YOUNG_THRESH)
+        self.lvh_l2_male_gt = GT(self, 'LVH_L2_MALE_imp', LVH_L2_MALE_THRESH)
+        self.lvh_l2_female_gt = GT(self, 'LVH_L2_FEMALE_imp', LVH_L2_FEMALE_THRESH)
+        self.peak_r_v1_gt = GT(self, 'PEAK_R_V1_imp', PEAK_R_THRESH)
+        self.deep_s_v5_gt = GT(self, 'DEEP_S_V5_imp', DEEP_S_THRESH)
+        self.deep_s_v6_gt = GT(self, 'DEEP_S_V6_imp', DEEP_S_THRESH)
+        self.dom_r_v1_gt = GT(self, 'DOM_R_V1_imp', DOM_R_THRESH)
+        self.dom_s_v5_lt = LT(self, 'DOM_S_V5_imp', DOM_S_THRESH)
+        self.dom_s_v6_lt = LT(self, 'DOM_S_V6_imp', DOM_S_THRESH)
+
+        # Imply
+        self.imply_decision_embed_layer = self.get_mlp_embed_layer(self, hparams)
+        self.LVH_imply_VH = Imply(self, self.get_imply_hparams(hparams, ['LVH_imp_VH']))
+        self.RVH_imply_VH = Imply(self, self.get_imply_hparams(hparams, ['RVH_imp_VH']))
+
+    def apply_rule(self, x) -> None:
+        batched_ecg, batched_obj_feat = x
+
+        # Extract objective features: AGE, MALE, R_AMP_aVL, R_AMP_V1, R_AMP_V6, S_AMP_V1, S_AMP_V3, S_AMP_V5, S_AMP_V6, RS_RATIO_V1, RS_RATIO_V5, RS_RATIO_V6, RAD # noqa: E501
+        AGE = get_by_str(batched_obj_feat, ['AGE'], Feature)
+        MALE = get_by_str(batched_obj_feat, ['MALE'], Feature)
+        R_AMP_aVL = get_by_str(batched_obj_feat, ['R_AMP_aVL'], Feature)
+        R_AMP_V1 = get_by_str(batched_obj_feat, ['R_AMP_V1'], Feature)
+        R_AMP_V6 = get_by_str(batched_obj_feat, ['R_AMP_V6'], Feature)
+        S_AMP_V1 = get_by_str(batched_obj_feat, ['S_AMP_V1'], Feature)
+        S_AMP_V3 = get_by_str(batched_obj_feat, ['S_AMP_V3'], Feature)
+        S_AMP_V5 = get_by_str(batched_obj_feat, ['S_AMP_V5'], Feature)
+        S_AMP_V6 = get_by_str(batched_obj_feat, ['S_AMP_V6'], Feature)
+        RS_RATIO_V1 = get_by_str(batched_obj_feat, ['RS_RATIO_V1'], Feature)
+        RS_RATIO_V5 = get_by_str(batched_obj_feat, ['RS_RATIO_V5'], Feature)
+        RS_RATIO_V6 = get_by_str(batched_obj_feat, ['RS_RATIO_V6'], Feature)
+        RAD = get_by_str(batched_obj_feat, ['RAD'], Feature)
+
+        # Comparison operators
+        self.age_old_gt(AGE)  # AGE > 30
+        self.lvh_l1_old_gt(S_AMP_V1 + R_AMP_V6)  # S_AMP_V1 + R_AMP_V6 > 3.5 mV
+        self.lvh_l1_young_gt(S_AMP_V1 + R_AMP_V6)  # S_AMP_V1 + R_AMP_V6 > 4 mV
+        self.lvh_l2_male_gt(R_AMP_aVL + S_AMP_V3)  # R_AMP_aVL + S_AMP_V3 > 2.4 mV
+        self.lvh_l2_female_gt(R_AMP_aVL + S_AMP_V3)  # R_AMP_aVL + S_AMP_V3 > 1.8 mV
+        self.peak_r_v1_gt(R_AMP_V1)  # R_AMP_V1 > 0.7 mV
+        self.deep_s_v5_gt(S_AMP_V5)  # S_AMP_V5 > 0.7 mV
+        self.deep_s_v6_gt(S_AMP_V6)  # S_AMP_V6 > 0.7 mV
+        self.dom_r_v1_gt(RS_RATIO_V1)  # RS_RATIO_V1 > 1
+        self.dom_s_v5_lt(RS_RATIO_V5)  # RS_RATIO_V5 < 1
+        self.dom_s_v6_lt(RS_RATIO_V6)  # RS_RATIO_V6 < 1
+
+        # Imply
+        focused_embed = self.get_focused_embed()
+        decision_embed = self.imply_decision_embed_layer(focused_embed)
+
+        # (AGE_OLD_imp ∧ LVH_L1_OLD_imp) ∨ (~AGE_OLD_imp ∧ LVH_L1_YOUNG_imp) ∨ (MALE ∧ LVH_L2_MALE_imp) ∨ (~MALE ∧ LVH_L2_FEMALE_imp) -> LVH_imp_VH
+        self.mid_output['LVH_imply_VH_atcd'] = self.OR([
+            self.AND([self.mid_output['AGE_OLD_imp'], self.mid_output['LVH_L1_OLD_imp']]),
+            self.AND([self.NOT(self.mid_output['AGE_OLD_imp']), self.mid_output['LVH_L1_YOUNG_imp']]),
+            self.AND([MALE, self.mid_output['LVH_L2_MALE_imp']]),
+            self.AND([self.NOT(MALE), self.mid_output['LVH_L2_FEMALE_imp']]),
+        ])
+        self.LVH_imply_VH((self.cat_with('LVH_imply_VH_atcd', focused_embed), decision_embed))
+
+        # GOR([PEAK_R_V1_imp, DEEP_S_V5_imp ∨ DEEP_S_V6_imp, DOM_R_V1_imp, DOM_S_V5_imp ∨ DOM_S_V6_imp, RAD], 2) -> RVH_imp_VH
+        self.mid_output['RVH_imply_VH_atcd'] = self.GOR([
+            self.mid_output['PEAK_R_V1_imp'],
+            self.OR([self.mid_output['DEEP_S_V5_imp'], self.mid_output['DEEP_S_V6_imp']]),
+            self.mid_output['DOM_R_V1_imp'],
+            self.OR([self.mid_output['DOM_S_V5_imp'], self.mid_output['DOM_S_V6_imp']]),
+            RAD,
+        ])
+        self.RVH_imply_VH((self.cat_with('RVH_imply_VH_atcd', focused_embed), decision_embed))
+
+
+class TModule(EcgStep):
+    focused_leads: list[str] = T_LEADS
+    obj_feat_names: list[str] = [f'INVT_{lead}' for lead in T_LEADS]
+    feat_imp_names: list[str] = [f'INVT_{lead}_imp' for lead in T_LEADS]
+    comp_op_names: list[str] = [f'invt_{lead}_lt' for lead in T_LEADS]
+    imply_names: list[str] = ['MI_imply_T', 'LVH_imply_T', 'RVH_imply_T']
+    extra_terms_to_agg: list[str] = [
+        'NORM_imp', 'IMI_imp_T', 'AMI_imp_T', 'LMI_imp_T', 'LVH_imp_T', 'RVH_imp_T', 'MI_imply_T_atcd',
+        'LVH_imply_T_atcd', 'RVH_imply_T_atcd'
+    ]
+    pred_dx_names: list[tuple[str,
+                              list[str]]] = [('NORM', ['NORM_imp']), ('IMI', ['IMI_imp_T']), ('AMI', ['AMI_imp_T']),
+                                             ('LMI', ['LMI_imp_T']), ('LVH', ['LVH_imp_T']), ('RVH', ['RVH_imp_T'])]
+
+    NORM_if_NOT: list[str] = ['IMI_imp_T', 'AMI_imp_T', 'LMI_imp_T', 'LVH_imp_T', 'RVH_imp_T']
+
+    def __init__(self, all_mid_output: dict[str, dict[str, torch.Tensor]], hparams, is_using_hard_rule: bool = False):
+        super().__init__(self.module_name, all_mid_output, hparams, is_using_hard_rule)
+
+        self.GOR = Or(self, 2)
+        # Comparison operators
+        for lead in T_LEADS:
+            self.add_module(f'invt_{lead}_lt', LT(self, f'INVT_{lead}_imp', INVT_THRESH))
+
+        # Imply
+        self.imply_decision_embed_layer = self.get_mlp_embed_layer(self, hparams)
+        self.MI_imply_T = Imply(self, self.get_imply_hparams(hparams, ['IMI_imp_T', 'AMI_imp_T', 'LMI_imp_T']))
+
+        # * Ancillary criteria
+        self.LVH_imply_T = Imply(self, self.get_imply_hparams(hparams, ['LVH_imp_T']))
+        self.RVH_imply_T = Imply(self, self.get_imply_hparams(hparams, ['RVH_imp_T']))
+
+    def apply_rule(self, x) -> None:
+        batched_ecg, batched_obj_feat = x
+
+        # Extract objective features: ST_AMP, T_AMP
+        T_AMP = get_by_str(batched_obj_feat, [f'T_AMP_{lead}' for lead in T_LEADS],
+                           Feature)  # shape: (batch_size, len(T_LEADS))
+
+        # Comparison operators
+        for lead in T_LEADS:
+            getattr(self, f'invt_{lead}_lt')(T_AMP[:, LEAD_TO_INDEX[lead]])  # T_AMP < 0 mV
+
+        # Imply
+        focused_embed = self.get_focused_embed()
+        decision_embed = self.imply_decision_embed_layer(focused_embed)
+
+        # GOR([INVT_imp_x ∧ (STE_x_imp ∨ STD_x_imp), for x ∈ {I, II, V3-V6}], 1) -> IMI_imp_T ∧ AMI_imp_T ∧ LMI_imp_T
+        self.mid_output['MI_imply_T_atcd'] = self.OR([
+            self.AND([
+                self.mid_output['INVT_I_imp'],
+                self.OR([
+                    self.all_mid_output[STModule.__name__]['STE_I_imp'],
+                    self.all_mid_output[STModule.__name__]['STD_I_imp']
+                ])
+            ]),
+            self.AND([
+                self.mid_output['INVT_II_imp'],
+                self.OR([
+                    self.all_mid_output[STModule.__name__]['STE_II_imp'],
+                    self.all_mid_output[STModule.__name__]['STD_II_imp']
+                ])
+            ]),
+            self.AND([
+                self.mid_output['INVT_V3_imp'],
+                self.OR([
+                    self.all_mid_output[STModule.__name__]['STE_V3_imp'],
+                    self.all_mid_output[STModule.__name__]['STD_V3_imp']
+                ])
+            ]),
+            self.AND([
+                self.mid_output['INVT_V4_imp'],
+                self.OR([
+                    self.all_mid_output[STModule.__name__]['STE_V4_imp'],
+                    self.all_mid_output[STModule.__name__]['STD_V4_imp']
+                ])
+            ]),
+            self.AND([
+                self.mid_output['INVT_V5_imp'],
+                self.OR([
+                    self.all_mid_output[STModule.__name__]['STE_V5_imp'],
+                    self.all_mid_output[STModule.__name__]['STD_V5_imp']
+                ])
+            ]),
+            self.AND([
+                self.mid_output['INVT_V6_imp'],
+                self.OR([
+                    self.all_mid_output[STModule.__name__]['STE_V6_imp'],
+                    self.all_mid_output[STModule.__name__]['STD_V6_imp']
+                ])
+            ])
+        ])
+        self.MI_imply_T((self.cat_with('MI_imply_T_atcd', focused_embed), decision_embed))
+
+        # * Ancillary criteria
+        # INVT_V5_imp ∨ INVT_V6_imp -> LVH_imp_T
+        self.mid_output['LVH_imply_T_atcd'] = self.OR([self.mid_output['INVT_V5_imp'], self.mid_output['INVT_V6_imp']])
+        self.LVH_imply_T((self.cat_with('LVH_imply_T_atcd', focused_embed), decision_embed))
+
+        # INVT_V1_imp ∨ INVT_V2_imp ∨ INVT_V3_imp -> RVH_imp_T
+        self.mid_output['RVH_imply_T_atcd'] = self.OR(
+            [self.mid_output['INVT_V1_imp'], self.mid_output['INVT_V2_imp'], self.mid_output['INVT_V3_imp']])
+        self.RVH_imply_T((self.cat_with('RVH_imply_T_atcd', focused_embed), decision_embed))
+
+
+class AxisModule(EcgStep):
+    focused_leads: list[str] = AXIS_LEADS
+    obj_feat_names: list[str] = ['POS_QRS_I', 'POS_QRS_aVF', 'NORM_AXIS', 'LAD', 'RAD']
+    feat_imp_names: list[str] = ['POS_QRS_I_imp', 'POS_QRS_aVF_imp', 'NORM_AXIS_imp', 'LAD_imp', 'RAD_imp']
+    comp_op_names: list[str] = ['pos_qrs_I_gt', 'pos_qrs_aVF_gt']
+    imply_names: list[str] = ['LAFB_imply', 'LPFB_imply']
+    extra_terms_to_agg: list[str] = ['NORM_imp']
+    pred_dx_names: list[tuple[str, list[str]]] = [('NORM', ['NORM_imp']), ('LAFB', ['LAFB_imp']),
+                                                  ('LPFB', ['LPFB_imp'])]
+    NORM_if_NOT: list[str] = ['LAFB_imp', 'LPFB_imp']
+
+    def __init__(self, all_mid_output: dict[str, dict[str, torch.Tensor]], hparams, is_using_hard_rule: bool = False):
+        super().__init__(self.module_name, all_mid_output, hparams, is_using_hard_rule)
+
+        # Comparison operators
+        self.pos_qrs_I_gt = GT(self, 'POS_QRS_I_imp', POS_QRS_THRESH)
+        self.pos_qrs_aVF_gt = GT(self, 'POS_QRS_aVF_imp', POS_QRS_THRESH)
+
+        # Imply
+        self.imply_decision_embed_layer = self.get_mlp_embed_layer(self, hparams)
+
+        self.LAFB_imply = Imply(self, self.get_imply_hparams(hparams, ['LAFB_imp']))
+        self.LPFB_imply = Imply(self, self.get_imply_hparams(hparams, ['LPFB_imp']))
+
+    def apply_rule(self, x) -> None:
+        batched_ecg, batched_obj_feat = x
+
+        # Extract objective features: QRS_SUM_I, QRS_SUM_aVF
+        QRS_SUM_I = get_by_str(batched_obj_feat, ['QRS_SUM_I'], Feature)
+        QRS_SUM_aVF = get_by_str(batched_obj_feat, ['QRS_SUM_aVF'], Feature)
+
+        # Comparison operators
+        self.pos_qrs_I_gt(QRS_SUM_I)
+        self.pos_qrs_aVF_gt(QRS_SUM_aVF)
+
+        # NORM_AXIS_imp := POS_QRS_I ∧ POS_QRS_aVF
+        self.mid_output['NORM_AXIS_imp'] = self.AND(
+            [self.mid_output['POS_QRS_I_imp'], self.mid_output['POS_QRS_aVF_imp']])
+        # LAD_imp := POS_QRS_I ∧ ~POS_QRS_aVF
+        self.mid_output['LAD_imp'] = self.AND(
+            [self.mid_output['POS_QRS_I_imp'],
+             self.NOT(self.mid_output['POS_QRS_aVF_imp'])])
+        # RAD_imp := ~POS_QRS_I ∧ POS_QRS_aVF
+        self.mid_output['RAD_imp'] = self.AND(
+            [self.NOT(self.mid_output['POS_QRS_I_imp']), self.mid_output['POS_QRS_aVF_imp']])
+
+        # Imply
+        focused_embed = self.get_focused_embed()
+        decision_embed = self.imply_decision_embed_layer(focused_embed)
+
+        # LAD_imp -> LAFB_imp
+        self.LAFB_imply((self.cat_with('LAD_imp', focused_embed), decision_embed))
+
+        # RAD_imp -> LPFB_imp
+        self.LPFB_imply((self.cat_with('RAD_imp', focused_embed), decision_embed))
