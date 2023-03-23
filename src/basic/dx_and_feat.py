@@ -212,6 +212,13 @@ def fill_vec(vec: torch.Tensor, values: torch.Tensor, keys: list[str], vec_type:
     return vec
 
 
+def get_feat_vector(object):
+    """
+    Get the feature vector of the given object
+    """
+    return torch.tensor([getattr(object, feat.name) for feat in Feature])
+
+
 def pad_vector(values: torch.Tensor, keys: list[str], enum_type: Diagnosis | Feature):
     """
     Pad the diagnoses/feature values with zeros
