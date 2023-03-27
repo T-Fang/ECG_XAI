@@ -155,7 +155,7 @@ class SeqSteps(StepModule):
                  hparams: dict,
                  is_using_hard_rule: bool = False):
         super().__init__(id, all_mid_output, hparams, is_using_hard_rule)
-        self.steps: list[StepModule] = steps
+        self.steps = nn.ModuleList(steps)
 
     def clear_mid_output(self):
         super().clear_mid_output()
@@ -294,7 +294,7 @@ class PipelineModule(pl.LightningModule):
             self.mid_output_agg[get_agg_col_name(module_name, mid_output_name)] = []
 
     def _init_ensemble_layers(self):
-        assert len(self.dx_ensemble_dict) == len(Diagnosis)
+        # assert len(self.dx_ensemble_dict) == len(Diagnosis)
         for dx_name, imp_names in self.dx_ensemble_dict.items():
             if len(imp_names) == 1:
                 continue
@@ -467,13 +467,12 @@ class PipelineModule(pl.LightningModule):
         Path(fig_d).mkdir(parents=True, exist_ok=True)
         return fig_d
 
-    # TODO: aggregate printed output
     def agg_mid_output(self, phase: str):
         """
         Aggregate mid_output_agg into a pandas DataFrame and save to csv
         """
         for col_name, all_values in self.mid_output_agg.items():
-            self.mid_output_agg[col_name] = torch.cat(all_values, dim=0)
+            self.mid_output_agg[col_name] = torch.cat(all_values, dim=0).float()
         mid_output_agg_df = pd.DataFrame(self.mid_output_agg)
         mid_output_agg_path = os.path.join(self.mid_output_agg_dir,
                                            f'{phase}_epoch_{self.current_epoch}_mid_output_agg.csv')
@@ -537,8 +536,12 @@ class Formula(Rule):
 
     def __init__(self, step_module: StepModule, save_to_mid_output: str = ''):
         super().__init__()
-        self.step_module = step_module
+        self.step_module_container = [step_module]
         self.save_to_mid_output = save_to_mid_output
+
+    @property
+    def step_module(self):
+        return self.step_module_container[0]
 
     @property
     def mid_output(self):

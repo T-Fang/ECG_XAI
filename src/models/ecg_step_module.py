@@ -3,13 +3,7 @@ import torch.nn as nn
 from src.basic.constants import AGE_OLD_THRESH, AXIS_LEADS, BLOCK_LEADS, BRAD_THRESH, DEEP_S_THRESH, DOM_R_THRESH, DOM_S_THRESH, INVT_THRESH, LP_THRESH_II, LQRS_WPW_THRESH, LVH_L1_OLD_THRESH, LVH_L1_YOUNG_THRESH, LVH_L2_FEMALE_THRESH, LVH_L2_MALE_THRESH, N_LEADS, LEAD_TO_INDEX, ALL_LEADS, P_LEADS, PEAK_P_THRESH_II, PEAK_P_THRESH_V1, PEAK_R_THRESH, POS_QRS_THRESH, Q_AMP_THRESH, Q_DUR_THRESH, RHYTHM_LEADS, SARRH_THRESH, SIGNAL_LEN, LPR_THRESH, LQRS_THRESH, SPR_THRESH, STD_LEADS, STD_THRESH, STE_THRESH, T_LEADS, TACH_THRESH, VH_LEADS  # noqa: E501
 from src.basic.rule_ml import LT, And, Or, PipelineModule, StepModule, SeqSteps, Imply, GT, Not, ComparisonOp, get_agg_col_name
 from src.basic.dx_and_feat import Diagnosis, Feature, get_by_str
-
-
-def calc_output_shape(length_in, kernel_size, stride=1, padding=0, dilation=1):
-    """
-    calculate the shape of the output from a convolutional/maxpooling layer
-    """
-    return (length_in + 2 * padding - dilation * (kernel_size - 1) - 1) // stride + 1
+from src.utils.train_utils import calc_output_shape
 
 
 class EcgStep(StepModule):
@@ -273,7 +267,7 @@ class BasicCnn(EcgStep):
         batched_ecg, batched_obj_feat = x
         embed = self.conv_layers(batched_ecg)
         embed = embed.view(-1, self.fc_input_dim)
-        y_hat = self.fc_layers(embed)
+        y_hat = torch.sigmoid(self.fc_layers(embed))
         self.mid_output['y_hat'] = y_hat
 
 
@@ -1029,10 +1023,13 @@ class AxisModule(EcgStep):
 class BasicCnnPipeline(PipelineModule):
 
     def _build_pipeline(self):
-        return BasicCnn(self.all_mid_output, self.hparams.hparams[BasicCnn.__name__], self.is_using_hard_rule)
+        basic_cnn = BasicCnn(self.all_mid_output, self.hparams.hparams[BasicCnn.__name__], self.is_using_hard_rule)
+        steps = [basic_cnn]
+        pipeline = SeqSteps(SeqSteps.__name__, self.all_mid_output, steps, {}, self.is_using_hard_rule)
+        return pipeline
 
-    def forward(self, x):
-        self.pipeline(x)
+    def forward(self, batched_ecg: torch.Tensor, batched_obj_feat: torch.Tensor):
+        self.pipeline((batched_ecg, batched_obj_feat))
         return self.all_mid_output[BasicCnn.__name__]['y_hat']
 
 

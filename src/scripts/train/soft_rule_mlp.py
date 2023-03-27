@@ -14,9 +14,9 @@ N_TRIALS = 64
 TIMEOUT = 86400
 MAX_EPOCHS = 50
 SAVE_TOP_K = 5
-USE_MPAV = True
+USE_MPAV = False
 USE_LATTICE = False
-SAVE_DIR = os.path.join(TRAIN_LOG_PATH, "soft_rule_mpav/")
+SAVE_DIR = os.path.join(TRAIN_LOG_PATH, "soft_rule_mlp/")
 
 
 # Define hyperparameters here
