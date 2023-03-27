@@ -1,18 +1,20 @@
 # from dataclasses import dataclass
 import os
+from pathlib import Path
 import pandas as pd
 import torch
 from torch import optim
 import torch.nn as nn
-import torch.nn.functional as F
 import pytorch_lightning as pl
-# from enum import Enum
+from pytorch_lightning.utilities import grad_norm
+from pytorch_lightning.loggers import TensorBoardLogger
+import matplotlib.pyplot as plt
 from torch.utils.data import Dataset
 # from pmlayer.torch.layers import HLattice
 from src.models.lattice import HL
 from torchmetrics import MetricCollection
 from torchmetrics.classification import MultilabelAccuracy, MultilabelAUROC, MultilabelAveragePrecision
-from src.basic.dx_and_feat import Diagnosis, Feature, pad_vector
+from src.basic.dx_and_feat import Diagnosis, Feature
 
 
 ########################################
@@ -88,7 +90,7 @@ class StepModule(nn.Module):
         self.id: str = id
         self.all_mid_output: dict[str, dict[str, torch.Tensor]] = all_mid_output
         self.all_mid_output[id] = {}
-        self.is_using_hard_rule = is_using_hard_rule
+        self.is_using_hard_rule: bool = is_using_hard_rule
 
     def clear_mid_output(self):
         self.all_mid_output[self.id].clear()
@@ -123,11 +125,22 @@ class StepModule(nn.Module):
         pass
 
     @property
+    def compared_agg(self) -> list[tuple[str, str]]:
+        """
+        Compared aggregated mid_output, each tuple in ``compared_agg`` is a pair of names of aggregated mid_output to be compared.
+        """
+        pass
+
+    @property
     def dx_ensemble_dict(self) -> dict[str, list[tuple[str, str]]]:
         """
         Contains the dict describing how to ensemble different diagnoses, e.g. {'AVB': [('BlockModule', 'AVB_imp')]}
         """
         pass
+
+
+def get_agg_col_name(module_name: str, mid_output_name: str):
+    return f"{module_name}_{mid_output_name}"
 
 
 class SeqSteps(StepModule):
@@ -169,7 +182,7 @@ class SeqSteps(StepModule):
                 all_feat_loss.append(feat_loss)
             if delta_loss:
                 all_delta_loss.append(delta_loss)
-        loss = {'feat': sum(all_feat_loss), 'delta': sum(all_delta_loss)}
+        loss = {'feat': float(sum(all_feat_loss)), 'delta': float(sum(all_delta_loss))}
         self.mid_output['loss'] = loss
         return loss
 
@@ -195,6 +208,13 @@ class SeqSteps(StepModule):
         return mid_output_to_agg
 
     @property
+    def compared_agg(self) -> list[tuple[str, str]]:
+        compared_agg = []
+        for step in self.steps:
+            compared_agg.extend(step.compared_agg)
+        return compared_agg
+
+    @property
     def dx_ensemble_dict(self) -> dict[str, list[tuple[str, str]]]:
         ensemble_dict = {}
         for step in self.steps:
@@ -205,19 +225,6 @@ class SeqSteps(StepModule):
         return ensemble_dict
 
 
-# Flow Controller
-# class StepController():
-
-#     def __init__(self):
-#         self.step_modules: list[StepModule] = []
-
-# DX_TO_MODULE = {'NORM': 'NormModule', 'AVB': 'BlockModule', 'LBBB': 'BlockModule', 'RBBB': 'BlockModule'}
-# EXTRA_LOSS_TO_LOG = [('BlockModule', 'feat_loss'), ('BlockModule', 'delta_loss')]
-
-# mid_output to be aggregated
-# AGG_MID_OUTPUT = [('BlockModule', 'LPR_imp'), ('BlockModule', 'LQRS_imp')]
-
-
 class PipelineModule(pl.LightningModule):
     """
     The pipeline module that combines step modules.
@@ -226,16 +233,19 @@ class PipelineModule(pl.LightningModule):
 
     def __init__(self, hparams: dict):
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters()  # hyperparameters are saved as self.hparams.hparams
         # get individual hyperparams
         self.feat_loss_weight = hparams['feat_loss_weight']
         self.delta_loss_weight = hparams['delta_loss_weight']
-        self.mid_output_agg_dir: str = hparams['mid_output_agg_dir']
-        self.is_agg_mid_output: bool = hparams['is_agg_mid_output'] if 'is_agg_mid_output' in hparams else False
+        self.is_agg_mid_output: bool = hparams['is_agg_mid_output'] if 'is_agg_mid_output' in hparams else True
+        self.is_using_hard_rule: bool = hparams['is_using_hard_rule'] if 'is_using_hard_rule' in hparams else False
 
         # get individual optimizer hyperparams
-        self.initial_lr = hparams['initial_lr']
-        self.exp_lr_gamma = hparams['exp_lr_gamma']
+        self.lr = hparams['optim']['lr']
+        self.beta1 = hparams['optim']['beta1']
+        self.beta2 = hparams['optim']['beta2']
+        self.eps = hparams['optim']['eps']
+        self.exp_lr_gamma = hparams['optim']['exp_lr_gamma']
 
         # * May be changed
         self.loss_fn = nn.BCELoss()
@@ -250,6 +260,7 @@ class PipelineModule(pl.LightningModule):
         self.extra_terms_to_log: list[tuple[str, str]] = self.pipeline.extra_terms_to_log
         self.mid_output_to_agg: list[tuple[str, str]] = self.pipeline.mid_output_to_agg
         self._init_mid_output_agg()
+        self.compared_agg: list[tuple[str, str]] = self.pipeline.compared_agg
         self.dx_ensemble_dict: dict[str, list[tuple[str, str]]] = self.pipeline.dx_ensemble_dict
         self._init_ensemble_layers()
 
@@ -280,8 +291,7 @@ class PipelineModule(pl.LightningModule):
             self.mid_output_agg[feat.name] = []
 
         for module_name, mid_output_name in self.mid_output_to_agg:
-            col_name = f'{module_name}_{mid_output_name}'
-            self.mid_output_agg[col_name] = []
+            self.mid_output_agg[get_agg_col_name(module_name, mid_output_name)] = []
 
     def _init_ensemble_layers(self):
         assert len(self.dx_ensemble_dict) == len(Diagnosis)
@@ -292,12 +302,18 @@ class PipelineModule(pl.LightningModule):
 
     def _build_pipeline(self) -> StepModule:
         """
-        Build the pipeline module using the self.hparams (self.all_mid_output has already been initialized).
+        Build the pipeline module using the self.hparams.hparams (self.all_mid_output has already been initialized).
         """
         raise NotImplementedError
 
     def clear_mid_output(self):
         self.pipeline.clear_mid_output()
+
+    def use_hard_rule(self):
+        self.pipeline.use_hard_rule()
+
+    def use_soft_rule(self):
+        self.pipeline.use_soft_rule()
 
     # TODO: remove
     def log_metric(self, phase: str, metric_result, metric_names: list[str], on_epoch: bool):
@@ -308,7 +324,9 @@ class PipelineModule(pl.LightningModule):
                      on_step=not on_epoch,
                      on_epoch=on_epoch)
 
-    def get_y_hat(self):
+    def forward(self, batched_ecg: torch.Tensor, batched_obj_feat: torch.Tensor):
+        self.pipeline((batched_ecg, batched_obj_feat))
+
         all_dx_pred = []
         all_dx_name = []
         for dx in Diagnosis:
@@ -319,7 +337,7 @@ class PipelineModule(pl.LightningModule):
             else:
                 ensemble_layer = getattr(self, f'{dx.name}_ensemble')
                 imps = [self.all_mid_output[module_name][imp_name] for module_name, imp_name in imp_names]
-                dx_pred = F.sigmoid(ensemble_layer(torch.stack(imps, dim=1)).squeeze())
+                dx_pred = torch.sigmoid(ensemble_layer(torch.stack(imps, dim=1)).squeeze())
 
             all_dx_pred.append(dx_pred)
             all_dx_name.append(dx.name)
@@ -327,19 +345,13 @@ class PipelineModule(pl.LightningModule):
         return y_hat
 
     def get_y_and_loss(self, batch):
-        x, y = batch
-        loss = self.pipeline(x)
+        (batched_ecg, batched_obj_feat), y = batch
+        y_hat = self(batched_ecg, batched_obj_feat)
+        loss = self.pipeline.mid_output['loss']
         feat_loss, delta_loss = loss['feat'], loss['delta']
 
-        # TODO: replace with get_y_hat()
-        AVB = self.all_mid_output['BlockModule']['AVB']
-        LBBB = self.all_mid_output['BlockModule']['LBBB']
-        RBBB = self.all_mid_output['BlockModule']['RBBB']
-
-        values = torch.stack([AVB, LBBB, RBBB], dim=1)
-        y_hat = pad_vector(values, ['AVB', 'LBBB', 'RBBB'], Diagnosis)
-
         dx_loss = self.loss_fn(y_hat, y)
+        y = y.int()
         return (y_hat, y), (dx_loss, feat_loss, delta_loss)
 
     def log_loss(self, phase: str, dx_loss, feat_loss, delta_loss):
@@ -371,18 +383,40 @@ class PipelineModule(pl.LightningModule):
             # save y and y_hat to self.mid_output_to_agg
             dx_ground_truth = y[:, dx.value]
             dx_pred = y_hat[:, dx.value]
+            if dx.name not in self.mid_output_agg:
+                self.mid_output_agg[dx.name] = []
+                self.mid_output_agg[f'{dx.name}_hat'] = []
             self.mid_output_agg[dx.name].append(dx_ground_truth)
             self.mid_output_agg[f'{dx.name}_hat'].append(dx_pred)
 
         for feat in Feature:
             # save objective features to self.mid_output_to_agg
             obj_feat = batched_obj_feat[:, feat.value]
+            if feat.name not in self.mid_output_agg:
+                self.mid_output_agg[feat.name] = []
             self.mid_output_agg[feat.name].append(obj_feat)
 
         for module_name, mid_output_name in self.mid_output_to_agg:
             mid_output = self.all_mid_output[module_name][mid_output_name]
-            col_name = f'{module_name}_{mid_output_name}'
+            col_name = get_agg_col_name(module_name, mid_output_name)
+            if col_name not in self.mid_output_agg:
+                self.mid_output_agg[col_name] = []
             self.mid_output_agg[col_name].append(mid_output)
+
+    @property
+    def example_input(self):
+        eg_batched_ecg = torch.rand([32, 12, 5000], dtype=torch.float32)
+        eg_batched_obj_feat = torch.rand([32, len(Feature)], dtype=torch.float32)
+        batched_input = (eg_batched_ecg, eg_batched_obj_feat)
+        return batched_input
+
+    @property
+    def tb_logger(self) -> TensorBoardLogger:
+        return self.logger.experiment
+
+    def on_fit_start(self):
+        # self.tb_logger.add_graph(model=self, input_to_model=self.example_input)
+        self.tb_logger.add_text('batch_size', str(self.trainer.datamodule.hparams.batch_size), 0)
 
     def training_step(self, batch, batch_idx):
         (y_hat, y), (dx_loss, feat_loss, delta_loss) = self.get_y_and_loss(batch)
@@ -402,7 +436,7 @@ class PipelineModule(pl.LightningModule):
 
         self.log_loss('val', dx_loss, feat_loss, delta_loss)
         self.log_extra_loss('val')
-        if self.is_agg_mid_output:
+        if self.is_agg_mid_output and self.current_epoch == self.trainer.max_epochs - 1:
             self.add_mid_output_to_agg(y_hat, batch)
 
         self.val_metric.update(y_hat, y)
@@ -423,6 +457,16 @@ class PipelineModule(pl.LightningModule):
 
         self.clear_mid_output()
 
+    @property
+    def mid_output_agg_dir(self) -> str:
+        return self.logger.log_dir
+
+    @property
+    def fig_dir(self):
+        fig_d = os.path.join(self.mid_output_agg_dir, 'figures')
+        Path(fig_d).mkdir(parents=True, exist_ok=True)
+        return fig_d
+
     # TODO: aggregate printed output
     def agg_mid_output(self, phase: str):
         """
@@ -431,29 +475,47 @@ class PipelineModule(pl.LightningModule):
         for col_name, all_values in self.mid_output_agg.items():
             self.mid_output_agg[col_name] = torch.cat(all_values, dim=0)
         mid_output_agg_df = pd.DataFrame(self.mid_output_agg)
-        mid_output_agg_path = os.path.join(self.mid_output_agg_dir, f'{phase}_{self.current_epoch}_mid_output_agg.csv')
+        mid_output_agg_path = os.path.join(self.mid_output_agg_dir,
+                                           f'{phase}_epoch_{self.current_epoch}_mid_output_agg.csv')
         mid_output_agg_df.to_csv(mid_output_agg_path)
 
-    def validation_epoch_end(self, outputs):
-        if self.is_agg_mid_output:
+    def compare_agg_via_scatter(self, phase: str):
+        """
+        Compare the aggregated mid output via scatter plot
+        """
+        fig, ax = plt.subplots()
+        for xlabel, ylabel in self.compared_agg:
+            x = self.mid_output_agg[xlabel]
+            y = self.mid_output_agg[ylabel]
+            ax.set_title(f'{ylabel} vs {xlabel}')
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel(ylabel)
+            ax.scatter(x, y)
+            self.tb_logger.add_figure(f'{phase}_fig/{ylabel}_vs_{xlabel}', fig)
+            fig.savefig(os.path.join(self.fig_dir, f'{phase}_{ylabel}_vs_{xlabel}.png'))
+            ax.clear()
+        plt.close(fig)
+
+    def on_validation_epoch_end(self):
+        if self.is_agg_mid_output and self.current_epoch == self.trainer.max_epochs - 1:
             self.agg_mid_output('val')
+            self.compare_agg_via_scatter('val')
             self.mid_output_agg.clear()
 
-    def test_epoch_end(self, outputs):
+    def on_test_epoch_end(self):
         if self.is_agg_mid_output:
             self.agg_mid_output('test')
+            self.compare_agg_via_scatter('test')
             self.mid_output_agg.clear()
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=self.initial_lr)
+        optimizer = optim.Adam(self.parameters(), lr=self.lr, betas=[self.beta1, self.beta2], eps=self.eps)
         scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=self.exp_lr_gamma)
         return [optimizer], [scheduler]
 
-
-class EcgPipeline(PipelineModule):
-
-    def _build_pipeline(self):
-        raise NotImplementedError
+    def on_before_optimizer_step(self, optimizer, optimizer_idx):
+        # need to remove optimizer_idx if migrated to pytorch-lightning 2.0
+        self.log_dict(grad_norm(self, norm_type=2))
 
 
 ########################################
@@ -517,7 +579,7 @@ class And(LogicConnect):
     def apply_soft_rule(self, x: list[torch.Tensor]):
         # x is the list of batched evaluation results of formulae involved in this logical connective,
         # where each result is of size N.
-        return F.relu(torch.sum(torch.stack(x, dim=1), dim=1) - len(x) + 1)
+        return torch.clamp(torch.sum(torch.stack(x, dim=1), dim=1) - len(x) + 1.0, min=0)
 
 
 class Or(LogicConnect):
@@ -529,7 +591,7 @@ class Or(LogicConnect):
     def apply_soft_rule(self, x: list[torch.Tensor]):
         # x is the list of batched evaluation results of formulae involved in this logical connective,
         # where each result is of size N.
-        return -F.relu(1 - torch.sum(torch.stack(x, dim=1), dim=1) / self.at_least_k_is_true) - 1
+        return torch.clamp(torch.sum(torch.stack(x, dim=1), dim=1) / self.at_least_k_is_true, max=1)
 
 
 class Not(LogicConnect):
@@ -543,20 +605,22 @@ class Imply(LogicConnect):
     def __init__(self, step_module: StepModule, hparams: dict):
         # in Imply, we save the consequent to mid_output with key specified by ``save_to_mid_output``
         super().__init__(step_module, "")
-        self.consequents = hparams['consequents']
-        self.negate_consequents = hparams['negate_consequents']
-        self.input_dim = hparams['input_dim']
-        self.output_dims = hparams['output_dims']
+        self.antecedent: str = hparams['antecedent']
+        self.negate_atcd: bool = hparams['negate_atcd']
+        self.consequents: list[str] = hparams['consequents']
+        self.negate_consequents: list[bool] = hparams['negate_consequents']
+        self.input_dim: int = hparams['input_dim']
+        self.output_dims: list[int] = hparams['output_dims']
         # if we use the method of modifying pre-activated values,
         # then it is assumed that the first index is the evaluation result of the antecedent
-        self.use_mpav = hparams['use_mpav'] if 'use_mpav' in hparams else False
-        self.lattice_sizes = hparams['lattice_sizes'] if 'lattice_sizes' in hparams else []
+        self.use_mpav: bool = hparams['use_mpav'] if 'use_mpav' in hparams else False
+        self.lattice_sizes: list[int] = hparams['lattice_sizes'] if 'lattice_sizes' in hparams else []
         if 'lattice_inc_indices' in hparams:
-            self.lattice_inc_indices = hparams['lattice_inc_indices']
+            self.lattice_inc_indices: list[int] = hparams['lattice_inc_indices']
         elif self.lattice_sizes:
-            self.lattice_inc_indices = [0]
+            self.lattice_inc_indices: list[int] = [0]
         else:
-            self.lattice_inc_indices = []
+            self.lattice_inc_indices: list[int] = []
 
         self.rho = nn.Parameter(torch.tensor(0.5, dtype=torch.float32), requires_grad=True)
 
@@ -573,6 +637,15 @@ class Imply(LogicConnect):
             self.init_mlp()
         elif self.use_lattice:
             self.init_lattice()
+
+    def cat_atcd_with(self, focused_embed: torch.Tensor) -> torch.Tensor:
+        """
+        Concatenate desired mid_output with the focused embed, and negate the mid_output if needed.
+        """
+        atcd = torch.unsqueeze(self.mid_output[self.antecedent], 1)
+        if self.negate_atcd:
+            atcd = self.step_module.NOT(atcd)
+        return torch.cat((atcd, focused_embed), dim=1)
 
     @property
     def non_mono_input_dim(self):
@@ -605,9 +678,10 @@ class Imply(LogicConnect):
             self.add_module(f"l{i}", HL(self.input_dim, sizes, self.lattice_inc_indices, self.output_dims[-1]))
 
     def apply_soft_rule(self, x):
-        x, decision_embed = x
+        focused_embed, decision_embed = x
+        # decision_embed (of size batch_size x (output_dims[-1])) is results after passing non-monotonic input through an MLP
+        x = self.cat_atcd_with(focused_embed)
         # x is the batched input of size batch_size x input_dim
-        # decision_embed (of size batch_size x (input_dim - 1)) is results after passing non-monotonic input through an MLP
 
         if self.use_mlp:
             mlp_out = getattr(self, 'mlp_output')(decision_embed)
@@ -624,10 +698,8 @@ class Imply(LogicConnect):
                     torch.squeeze(getattr(self, f"l{i}")(x, decision_embed), dim=1) + pre_activated_modification)
 
     def apply_hard_rule(self, x):
-        x, decision_embed = x
-        # x is the batched input of size batch_size x input_dim
         for consequent in self.consequents:
-            self.mid_output[consequent] = x[:, 0]
+            self.mid_output[consequent] = self.mid_output[self.antecedent]
 
 
 class Predicate(Formula):
@@ -655,14 +727,14 @@ class ComparisonOp(Predicate):
         return torch.sigmoid(int(self.is_gt) * torch.abs(self.w) * (term - self.threshold * (1 + self.delta)))
 
     def apply_hard_rule(self, term):
-        return (term > self.threshold).int() if self.is_gt else (term < self.threshold).int()
+        return float(term > self.threshold) if self.is_gt else float(term < self.threshold)
 
     @property
     def delta_loss(self) -> torch.Tensor:
         return self.delta * self.delta
 
 
-class GT(Predicate):
+class GT(ComparisonOp):
     """
     A predicate that evaluates to true if the left term is greater than the right term.
     """
@@ -671,7 +743,7 @@ class GT(Predicate):
         super().__init__(step_module, save_to_mid_output, threshold, is_gt=True)
 
 
-class LT(Predicate):
+class LT(ComparisonOp):
     """
     A predicate that evaluates to true if the left term is less than the right term.
     """

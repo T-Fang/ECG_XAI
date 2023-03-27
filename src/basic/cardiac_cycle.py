@@ -1,7 +1,7 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
 from numpy.typing import NDArray
-from src.basic.constants import DEEP_S_THRESH, DOM_R_THRESH, DOM_S_THRESH, INVT_THRESH, LP_THRESH_II, LQRS_WPW_THRESH, MS_PER_INDEX, LPR_THRESH, PEAK_P_THRESH_II, PEAK_P_THRESH_V1, PEAK_R_THRESH, POS_QRS_THRESH, SPR_THRESH, LQRS_THRESH, Q_AMP_THRESH, Q_DUR_THRESH, R_AMP_THRESH  # noqa: E501
+from src.basic.constants import DEEP_S_THRESH, DOM_R_THRESH, DOM_S_THRESH, INVT_THRESH, LEAD_TO_INDEX, LP_THRESH_II, LQRS_WPW_THRESH, MS_PER_INDEX, LPR_THRESH, PEAK_P_THRESH_II, PEAK_P_THRESH_V1, PEAK_R_THRESH, POS_QRS_THRESH, SPR_THRESH, LQRS_THRESH, Q_AMP_THRESH, Q_DUR_THRESH, R_AMP_THRESH, STD_THRESH, STE_THRESH  # noqa: E501
 
 
 @dataclass
@@ -17,14 +17,24 @@ class CardiacCycle():
     T_onset: int
     T_peak: int
     T_offset: int
-    extra_info: dict = {}
+    extra_info: dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        # convert all fields to int
+        for f in self.__dataclass_fields__:
+            if f == 'extra_info':
+                setattr(self, f, int(getattr(self, f)))
+
+    @property
+    def ecg(self):
+        if 'ecg' in self.extra_info:
+            return self.extra_info['ecg']
+        else:
+            raise AttributeError('Corresponding Ecg object not found in CardiacCycle\'s extra_info')
 
     @property
     def signal(self):
-        if 'signal' in self.extra_info:
-            return self.extra_info['signal']
-        else:
-            raise AttributeError('No signal found in CardiacCycle\'s extra_info')
+        return self.ecg.cleaned[LEAD_TO_INDEX[self.extra_info['lead']]]
 
     def is_sinus(self):
         return self.signal[self.P_peak] > 0
@@ -45,19 +55,27 @@ class CardiacCycle():
         if self.T_onset < self.QRS_offset:
             return np.nan, np.nan, np.nan
         ST_AMP = np.mean(self.signal[self.QRS_offset:self.T_onset + 1])
-        return int(ST_AMP > 0), int(ST_AMP < 0), int(ST_AMP)
+        return int(ST_AMP > STE_THRESH), int(ST_AMP < STD_THRESH), ST_AMP
 
     def get_PRWP(self):
         R_AMP = self.signal[self.R_peak]
         low_thresh, high_thresh = R_AMP_THRESH[self.extra_info['lead']][
-            self.extra_info['age_range']] if self.extra_info['lead'] == 'I' else R_AMP_THRESH[self.extra_info['lead']]
+            self.extra_info['age_range']] if self.extra_info['lead'] == 'V1' else R_AMP_THRESH[self.extra_info['lead']]
 
-        PRWP = min(1, (high_thresh - R_AMP) / (high_thresh - low_thresh))
+        PRWP = int((R_AMP < low_thresh) or (R_AMP > high_thresh))
         return PRWP
 
     def get_PATH_Q(self):
         Q_AMP = self.signal[self.Q_peak]
-        Q_DUR = max(0, (self.extra_info['Q_offset'] - self.QRS_onset) * MS_PER_INDEX)
+        if self.extra_info['Q_offset']:
+            Q_DUR = max(0, (self.extra_info['Q_offset'] - self.QRS_onset) * MS_PER_INDEX)
+        elif self.QRS_onset < self.Q_peak:
+            Q_DUR = 2 * (self.Q_peak - self.QRS_onset) * MS_PER_INDEX
+        else:
+            Q_DUR = np.nan
+            PATH_Q = np.nan
+            return Q_DUR, Q_AMP, PATH_Q
+
         PATH_Q = int((Q_DUR > Q_DUR_THRESH) and (Q_AMP < Q_AMP_THRESH[self.extra_info['lead']]))
         return Q_DUR, Q_AMP, PATH_Q
 
@@ -146,15 +164,13 @@ def get_cycles_in_lead(delineation: dict[str, NDArray[np.int64]]) -> list[Cardia
     """
     Get cardiac cycles in a single lead given its delineation
     """
-    # print('inside get_cycles_in_lead')
-    # assert check_delineation_dict_values_have_same_length(delineation)
     feature_indices = np.stack([
         delineation['ECG_P_Onsets'], delineation['ECG_P_Peaks'], delineation['ECG_P_Offsets'],
         delineation['ECG_R_Onsets'], delineation['ECG_Q_Peaks'], delineation['ECG_R_Peaks'], delineation['ECG_S_Peaks'],
         delineation['ECG_R_Offsets'], delineation['ECG_T_Onsets'], delineation['ECG_T_Peaks'],
         delineation['ECG_T_Offsets']
     ],
-                               axis=1)
+                               axis=1)  # noqa: E126
     # remove cardiac cycle with nan
     feature_indices = feature_indices[~np.isnan(feature_indices).any(axis=1)]
     return [indices2cycle(indices) for indices in feature_indices]

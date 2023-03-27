@@ -24,7 +24,7 @@ def load_corresponding_ecg(database_df: pd.DataFrame, data_dir: str):
         data = [wfdb.rdsamp(os.path.join(data_dir, f)) for f in database_df.filename_lr]
     else:
         data = [wfdb.rdsamp(os.path.join(data_dir, f)) for f in database_df.filename_hr]
-    data = np.array([signal.transpose() for signal, meta in data])
+    data = np.array([signal.transpose() for signal, meta in data], dtype=np.float32)
     return data
 
 
@@ -78,27 +78,21 @@ class SignalDataModule(pl.LightningDataModule):
                  data_dir: str,
                  processed_dir: str,
                  re_calc_feat: bool = False,
-                 batch_size: int = 256,
+                 batch_size: int = 64,
                  num_workers: int = 0,
                  pin_memory: bool = True):
         super().__init__()
-        self.data_dir = data_dir
-        self.processed_dir = processed_dir
+        self.save_hyperparameters()
         # create processed directory if not exist
-        if not os.path.exists(self.processed_dir):
-            os.makedirs(self.processed_dir)
-
-        self.re_calc_feat = re_calc_feat
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.pin_memory = pin_memory
+        if not os.path.exists(self.hparams.processed_dir):
+            os.makedirs(self.hparams.processed_dir)
 
     def prepare_data(self):
         # download, etc.
 
         # Make sure relevant dataset files exists
         if not self.ds_path_exists('train', with_feat=True):
-            self.load_ds_with_feat(re_calc_feat=self.re_calc_feat)
+            self.load_ds_with_feat(re_calc_feat=self.hparams.re_calc_feat)
 
     def setup(self, stage: str):
         if stage == "fit":
@@ -113,27 +107,27 @@ class SignalDataModule(pl.LightningDataModule):
 
     def train_dataloader(self):
         return DataLoader(self.train_ds,
-                          batch_size=self.batch_size,
-                          num_workers=self.num_workers,
-                          pin_memory=self.pin_memory)
+                          batch_size=self.hparams.batch_size,
+                          num_workers=self.hparams.num_workers,
+                          pin_memory=self.hparams.pin_memory)
 
     def val_dataloader(self):
         return DataLoader(self.val_ds,
-                          batch_size=self.batch_size,
-                          num_workers=self.num_workers,
-                          pin_memory=self.pin_memory)
+                          batch_size=self.hparams.batch_size,
+                          num_workers=self.hparams.num_workers,
+                          pin_memory=self.hparams.pin_memory)
 
     def test_dataloader(self):
         return DataLoader(self.test_ds,
-                          batch_size=self.batch_size,
-                          num_workers=self.num_workers,
-                          pin_memory=self.pin_memory)
+                          batch_size=self.hparams.batch_size,
+                          num_workers=self.hparams.num_workers,
+                          pin_memory=self.hparams.pin_memory)
 
     def predict_dataloader(self):
         return DataLoader(self.predict_ds,
-                          batch_size=self.batch_size,
-                          num_workers=self.num_workers,
-                          pin_memory=self.pin_memory)
+                          batch_size=self.hparams.batch_size,
+                          num_workers=self.hparams.num_workers,
+                          pin_memory=self.hparams.pin_memory)
 
     def load_ds_from_raw(self):
         """
@@ -143,9 +137,9 @@ class SignalDataModule(pl.LightningDataModule):
         raise NotImplementedError
 
     def save_datasets(self, train_ds, val_ds, test_ds, postfix=''):
-        pickle.dump(train_ds, open(os.path.join(self.processed_dir, f'train_ds{postfix}.pickle'), "wb"))
-        pickle.dump(val_ds, open(os.path.join(self.processed_dir, f'val_ds{postfix}.pickle'), "wb"))
-        pickle.dump(test_ds, open(os.path.join(self.processed_dir, f'test_ds{postfix}.pickle'), "wb"))
+        pickle.dump(train_ds, open(os.path.join(self.hparams.processed_dir, f'train_ds{postfix}.pickle'), "wb"))
+        pickle.dump(val_ds, open(os.path.join(self.hparams.processed_dir, f'val_ds{postfix}.pickle'), "wb"))
+        pickle.dump(test_ds, open(os.path.join(self.hparams.processed_dir, f'test_ds{postfix}.pickle'), "wb"))
 
     def ds_path_exists(self, sample_name: str, with_feat: bool = False):
         """
@@ -154,7 +148,7 @@ class SignalDataModule(pl.LightningDataModule):
         sample_name: one of 'train', 'val', and 'test'
         """
         file_postfix = '_with_feat' if with_feat else ''
-        dataset_path = os.path.join(self.processed_dir, f'{sample_name}_ds{file_postfix}.pickle')
+        dataset_path = os.path.join(self.hparams.processed_dir, f'{sample_name}_ds{file_postfix}.pickle')
         return os.path.exists(dataset_path)
 
     def load_processed_ds(self):
@@ -167,9 +161,9 @@ class SignalDataModule(pl.LightningDataModule):
             train_ds, val_ds, test_ds = self.load_ds_from_raw()
             self.save_datasets(train_ds, val_ds, test_ds)
         else:
-            train_ds = pickle.load(open(os.path.join(self.processed_dir, 'train_ds.pickle'), "rb"))
-            val_ds = pickle.load(open(os.path.join(self.processed_dir, 'val_ds.pickle'), "rb"))
-            test_ds = pickle.load(open(os.path.join(self.processed_dir, 'test_ds.pickle'), "rb"))
+            train_ds = pickle.load(open(os.path.join(self.hparams.processed_dir, 'train_ds.pickle'), "rb"))
+            val_ds = pickle.load(open(os.path.join(self.hparams.processed_dir, 'val_ds.pickle'), "rb"))
+            test_ds = pickle.load(open(os.path.join(self.hparams.processed_dir, 'test_ds.pickle'), "rb"))
         return train_ds, val_ds, test_ds
 
     def load_ds_with_feat(self, re_calc_feat: bool = False):
@@ -188,9 +182,9 @@ class SignalDataModule(pl.LightningDataModule):
             test_ds.calc_feat()
             self.save_datasets(train_ds, val_ds, test_ds, postfix='_with_feat')
         else:
-            train_ds = pickle.load(open(os.path.join(self.processed_dir, 'train_ds_with_feat.pickle'), "rb"))
-            val_ds = pickle.load(open(os.path.join(self.processed_dir, 'val_ds_with_feat.pickle'), "rb"))
-            test_ds = pickle.load(open(os.path.join(self.processed_dir, 'test_ds_with_feat.pickle'), "rb"))
+            train_ds = pickle.load(open(os.path.join(self.hparams.processed_dir, 'train_ds_with_feat.pickle'), "rb"))
+            val_ds = pickle.load(open(os.path.join(self.hparams.processed_dir, 'val_ds_with_feat.pickle'), "rb"))
+            test_ds = pickle.load(open(os.path.join(self.hparams.processed_dir, 'test_ds_with_feat.pickle'), "rb"))
         return train_ds, val_ds, test_ds
 
     def load_processed_sample(self, sample_name: str, with_feat: bool = True):
@@ -202,8 +196,8 @@ class SignalDataModule(pl.LightningDataModule):
         """
         assert self.ds_path_exists(sample_name,
                                    with_feat), f'No dataset file found for {sample_name} with_feat={with_feat}'
-        file_postfix = '' if with_feat else '_with_feat'
-        dataset_path = os.path.join(self.processed_dir, f'{sample_name}_ds{file_postfix}.pickle')
+        file_postfix = '_with_feat' if with_feat else ''
+        dataset_path = os.path.join(self.hparams.processed_dir, f'{sample_name}_ds{file_postfix}.pickle')
         dataset = pickle.load(open(dataset_path, "rb"))
         print(sample_name, 'dataset loaded!')
         return dataset
@@ -215,14 +209,14 @@ class EcgDataModule(SignalDataModule):
                  data_dir: str = PTBXL_PATH,
                  processed_dir: str = PROCESSED_DATA_PATH,
                  re_calc_feat: bool = False,
-                 batch_size: int = 256,
+                 batch_size: int = 64,
                  num_workers: int = 0,
                  pin_memory: bool = True):
         super().__init__(data_dir, processed_dir, re_calc_feat, batch_size, num_workers, pin_memory)
 
     def load_ds_from_raw(self):
-        database = load_database(self.data_dir)
-        X = load_corresponding_ecg(database, self.data_dir)
+        database = load_database(self.hparams.data_dir)
+        X = load_corresponding_ecg(database, self.hparams.data_dir)
 
         # train-val-test split: 60-20-20
         # Train

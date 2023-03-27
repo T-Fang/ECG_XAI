@@ -3,6 +3,7 @@ import numpy as np
 from numpy.typing import NDArray
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 import matplotlib.cm as cm
 import neurokit2 as nk
 from src.basic.constants import SAMPLING_RATE, DURATION, MIN_RULE_SATISFACTION_PERCENTAGE, SIGNAL_LEN, T_AMP_THRESH, P_AMP_THRESH
@@ -233,7 +234,7 @@ def custom_ecg_delineate_plot(
         delineation,
         sampling_rate=SAMPLING_RATE,
         window_range=(0.5, 1.5),
-):
+) -> Figure:
 
     window_start = int(window_range[0] * sampling_rate)
     window_end = int(window_range[1] * sampling_rate)

@@ -1,4 +1,4 @@
-python (conda create -n ecg_xai python=3.10 -y)
+python (conda create -n ecg_xai_pt2 python=3.10 -y)
 flake8 (conda install flake8 -y)
 yapf (conda install yapf -y)
 
@@ -6,11 +6,10 @@ numba (conda install numba -y)
 
 pytorch (conda install pytorch torchvision torchaudio pytorch-cuda=11.7 -c pytorch -c nvidia -y)
 - On Mac: conda install pytorch torchvision torchaudio -c pytorch -y
-pytorch lightning(conda install pytorch-lightning=1.9 -c conda-forge -y)
-torchmetrics (conda install -c conda-forge torchmetrics -y)
+lightning(pip install lightning) # lightning has bugs in namespace, using `import pytorch_lightning` instead of `import lightning.pytorch`
 optuna (conda install -c conda-forge optuna -y)
 - if optuna 3.2 is not released yet (pip install git+https://github.com/optuna/optuna.git)
-- install plotly (conda install plotly -y) and kaleido (pip install kaleido) if need to visualize optuna study
+- install plotly if need to visualize optuna study (conda install plotly -y)
 tensorboard (conda install -c conda-forge tensorboard -y)
 jupyter (conda install jupyter -y)
 

@@ -2,4 +2,4 @@
 ._*
 __pycache__/
 data/processed/
-logs/scheduler
+logs/**

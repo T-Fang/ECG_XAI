@@ -3,7 +3,7 @@ import platform
 
 # File Names
 CURRENT_OS = platform.system()
-PROJECT_PATH = '/home/ftian/storage/ECG_XAI/' if CURRENT_OS == 'Linux' else '/Users/tf/Computer Science/Archive/FYP/ECG_XAI/'
+PROJECT_PATH = '/home/ftian/storage/ECG_XAI/' if CURRENT_OS == 'Linux' else '/Users/tf/Computer_Science/Archive/FYP/ECG_XAI/'
 PTBXL_PATH = os.path.join(PROJECT_PATH, 'data/ptbxl/')
 PROCESSED_DATA_PATH = os.path.join(PROJECT_PATH, 'data/processed/')
 TRAIN_LOG_PATH = os.path.join(PROJECT_PATH, 'logs/train/')
@@ -76,8 +76,8 @@ R_AMP_THRESH = {
         'old': (0, 0.6)
     },
     'V2': (0.02, 1.2),
-    'V3': (0.1, 2),
-    'V4': (0.1, 2)
+    'V3': (0.1, 2.4),
+    'V4': (0.1, 2.4)
 }
 
 # ECG thresholds for PModule
@@ -116,7 +116,7 @@ CHOSEN_METADATA = [
     'age', 'sex', 'scp_codes', 'heart_axis', 'infarction_stadium1', 'strat_fold', 'filename_lr', 'filename_hr'
 ]
 ALL_LEADS = ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']
-STD_LEADS = ['II', 'III', 'aVL', 'aVF']
+STD_LEADS = ALL_LEADS
 LEAD_TO_INDEX = {
     'I': 0,
     'II': 1,

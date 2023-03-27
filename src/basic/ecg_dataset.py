@@ -19,7 +19,6 @@ class EcgDataset(SignalDataset):
         self.signals: list[Ecg] = []
         self.is_ecg_used: list[bool] = []
         for i in range(len(self.raw_recordings)):
-            # TODO: remove print
             print('****************************************\n** processing ecg', i, 'of', len(self.raw_recordings), '**')
             ecg = Ecg(self.raw_recordings[i], self.database_df.iloc[i])
             self.is_ecg_used.append(ecg.is_used)
@@ -33,3 +32,7 @@ class EcgDataset(SignalDataset):
     def find_ecg_with_superclass(self, class_name: str, index: int = 0):
         filtered_ecg = [ecg for ecg in self.signals if class_name in ecg.superclass.__str__()]
         return filtered_ecg[index]
+
+    def as32bit(self):
+        for signal in self.signals:
+            signal.as32bit()

@@ -1,5 +1,7 @@
 import os
+import warnings
 import ecg_plot
+from matplotlib.figure import Figure
 import numpy as np
 import pandas as pd
 import neurokit2 as nk
@@ -76,7 +78,7 @@ class Ecg(Signal):
         if VERBOSE:
             print('Finding R-peaks...')
 
-        self.all_rpeaks: list[NDArray[np.int64]] = []
+        self.all_rpeaks: list[NDArray[np.int32]] = []
         try:
             self.all_rpeaks = get_all_rpeaks(self.cleaned)
         except:  # noqa: E722
@@ -237,7 +239,7 @@ class Ecg(Signal):
             for cycle in self.all_cycles[lead_idx]:
                 cycle.extra_info['age_range'] = self.age_range
                 cycle.extra_info['lead'] = lead
-                cycle.extra_info['signal'] = self.cleaned[lead_idx]
+                cycle.extra_info['ecg'] = self
                 cycle.get_Q_offset()
 
     def agg_feat_across_leads(self, cycle_feat_func: Callable, leads: list[str] = ALL_LEADS, use_mean: bool = True):
@@ -261,11 +263,12 @@ class Ecg(Signal):
         cycle_feat_func: a function that takes a CardiacCycle and returns a tuple of boolean features and numerical features
         """
         lead_cycles = self.all_cycles[LEAD_TO_INDEX[lead]]
-        lead_features = np.array([cycle_feat_func(cycle) for cycle in lead_cycles])
-
-        mean_lead_feat: np.ndarray = np.nanmean(lead_features, axis=0)
+        lead_features = np.array([cycle_feat_func(cycle) for cycle in lead_cycles]).astype(np.float32)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            mean_lead_feat: np.ndarray = np.nanmean(lead_features, axis=0)
         if np.isnan(mean_lead_feat).any():
-            mean_lead_feat = np.zeros(mean_lead_feat.shape, dtype=int)
+            mean_lead_feat = np.zeros(mean_lead_feat.shape, dtype=np.float32)
         return mean_lead_feat
 
     # * Objective features for RhythmModule
@@ -276,11 +279,11 @@ class Ecg(Signal):
             all_heart_rates.append(signal_rate(rpeaks, sampling_rate=SAMPLING_RATE, desired_length=self.raw.shape[1]))
 
         all_heart_rates = np.stack(all_heart_rates)
-        self.HR = np.nanmean(all_heart_rates)
-        self.HR_STD = np.std(all_heart_rates)
+        self.HR = np.nanmean(all_heart_rates).astype(np.float32)
+        self.HR_STD = np.std(all_heart_rates).astype(np.float32)
         self.expected_n_cycles = int(self.HR * DURATION / 60)
-        self.BRAD = self.HR < 60
-        self.TACH = self.HR > 100
+        self.BRAD = int(self.HR < 60)
+        self.TACH = int(self.HR > 100)
 
     def calc_sinus(self):
         """
@@ -360,7 +363,7 @@ class Ecg(Signal):
             'V1', lambda cycle: cycle.get_RS_ratio())
         self.R_AMP_V5, self.S_AMP_V5, _, self.DEEP_S_V5, _, self.DOM_S_V5, self.RS_RATIO_V5 = self.calc_lead_feat(
             'V5', lambda cycle: cycle.get_RS_ratio())
-        self.R_AMP_V6, self.S_AMP_V6, _, self.DEEP_S_V6, _, self.DOM_S_V5, self.RS_RATIO_V6 = self.calc_lead_feat(
+        self.R_AMP_V6, self.S_AMP_V6, _, self.DEEP_S_V6, _, self.DOM_S_V6, self.RS_RATIO_V6 = self.calc_lead_feat(
             'V6', lambda cycle: cycle.get_RS_ratio())
         self.R_AMP_aVL = self.calc_lead_feat('aVL', lambda cycle: cycle.R_amp)
         self.S_AMP_V3 = self.calc_lead_feat('V3', lambda cycle: cycle.S_amp)
@@ -439,7 +442,7 @@ class Ecg(Signal):
         nk.ecg_plot(ecg_df, rpeaks=None, sampling_rate=None, show_type='default')
         return ecg_df, info
 
-    def plot_delineation(self, lead='II', method='dwt', window_range=(0.7, 1.6)):
+    def plot_delineation(self, lead='II', method='dwt', window_range=(0.7, 1.6)) -> Figure:
         if not self.has_delineated:
             self.delineate()
 
@@ -447,9 +450,9 @@ class Ecg(Signal):
         cleaned_lead = self.cleaned[idx]
         delineation = self.delineations[idx]
 
-        custom_ecg_delineate_plot(ecg_signal=cleaned_lead, delineation=delineation, window_range=window_range)
+        return custom_ecg_delineate_plot(ecg_signal=cleaned_lead, delineation=delineation, window_range=window_range)
 
-    def show_with_grid(self, show_cleaned=False):
+    def show_with_grid(self, show_cleaned=True):
         if show_cleaned and not self.is_cleaned:
             self.clean()
         recording = self.cleaned if show_cleaned else self.raw
@@ -459,6 +462,15 @@ class Ecg(Signal):
     def invert(self):
         new_ecg = Ecg(self.raw * -1, self.metadata, preprocess=False)
         return new_ecg
+
+    def as32bit(self):
+        self.raw = self.raw.astype(np.float32)
+        self.cleaned = self.cleaned.astype(np.float32)
+        for rpeaks in self.all_rpeaks:
+            rpeaks.astype(np.int32)
+        for delineation in self.delineations:
+            for value in delineation.values():
+                value.astype(np.int32)
 
     def check_cycle(self):
         # TODO: remove
