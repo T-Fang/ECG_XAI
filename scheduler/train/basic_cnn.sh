@@ -2,7 +2,7 @@
 
 ngpus='1'
 ncpus='8'
-mem='80G'
+mem='70G'
 walltime='25:00:00'
 name='basic_cnn'
 script_location='/home/ftian/storage/ECG_XAI/src/scripts/train/basic_cnn.py'

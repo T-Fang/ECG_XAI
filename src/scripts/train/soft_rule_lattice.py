@@ -3,44 +3,32 @@ import optuna
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import TensorBoardLogger
 import init_train  # noqa: F401
-from src.models.ecg_step_module import BasicCnn, BasicCnnPipeline
+from src.models.ecg_step_module import EcgPipeline
 from src.basic.constants import TRAIN_LOG_PATH
 from src.utils.data_utils import EcgDataModule
-from src.utils.train_utils import flatten_dict, get_basic_cnn_hparams, get_common_trainer_params, get_optim_hparams, get_trainer_callbacks, tune, visualize_study  # noqa: E501
+from src.utils.train_utils import flatten_dict, get_hparams, get_common_trainer_params, get_trainer_callbacks, tune, visualize_study
 
 # not-tuned Parameters
 N_WORKERS = 8
 USE_QMC = False
-N_TRIALS = 124
+N_TRIALS = 4
 TIMEOUT = 86400
 MAX_EPOCHS = 30
-SAVE_TOP_K = 5
+SAVE_TOP_K = 3
 USE_MPAV = False
-USE_LATTICE = False
-SAVE_DIR = os.path.join(TRAIN_LOG_PATH, "basic_cnn/")
-
-
-# Define hyperparameters here
-def get_hparams(trial: optuna.Trial) -> dict:
-    pipeline_hparams = {
-        'feat_loss_weight': 0,
-        'delta_loss_weight': 0,
-        'is_agg_mid_output': False,
-        'is_using_hard_rule': False
-    }
-
-    return {**pipeline_hparams, 'optim': get_optim_hparams(trial), BasicCnn.__name__: get_basic_cnn_hparams(trial)}
+USE_LATTICE = True
+SAVE_DIR = os.path.join(TRAIN_LOG_PATH, "soft_rule_lattice/")
 
 
 def objective(trial: optuna.Trial, datamodule: EcgDataModule, save_dir: str):
-    hparams = get_hparams(trial)
-    model = BasicCnnPipeline(hparams)
+    hparams = get_hparams(trial, USE_MPAV, USE_LATTICE)
+    model = EcgPipeline(hparams)
 
     trainer = Trainer(
         callbacks=get_trainer_callbacks(trial, SAVE_TOP_K),
         logger=TensorBoardLogger(save_dir=save_dir),
         max_epochs=MAX_EPOCHS,
-        auto_scale_batch_size='power',  # Use Tuner for pytorch_lightning >= 2.0
+        auto_scale_batch_size='power',
         # limit_train_batches=2,
         # limit_val_batches=2,
         **get_common_trainer_params())
@@ -49,7 +37,6 @@ def objective(trial: optuna.Trial, datamodule: EcgDataModule, save_dir: str):
     trainer.logger.log_hyperparams(flatten_dict(hparams))
 
     trainer.tune(model, datamodule=datamodule)
-    # tuner.scale_batch_size(model, datamodule=datamodule, mode="binsearch")
     print('Using batch size: ', datamodule.hparams.batch_size)
     if len(datamodule.train_ds) % datamodule.hparams.batch_size == 1:
         datamodule.hparams.batch_size -= 1
@@ -66,4 +53,4 @@ if __name__ == '__main__':
                  save_dir=SAVE_DIR,
                  use_qmc_sampler=USE_QMC,
                  num_workers=N_WORKERS)
-    visualize_study(study, SAVE_DIR, USE_LATTICE, False)
+    visualize_study(study, SAVE_DIR, USE_LATTICE)

@@ -3,7 +3,13 @@ import torch.nn as nn
 from src.basic.constants import AGE_OLD_THRESH, AXIS_LEADS, BLOCK_LEADS, BRAD_THRESH, DEEP_S_THRESH, DOM_R_THRESH, DOM_S_THRESH, INVT_THRESH, LP_THRESH_II, LQRS_WPW_THRESH, LVH_L1_OLD_THRESH, LVH_L1_YOUNG_THRESH, LVH_L2_FEMALE_THRESH, LVH_L2_MALE_THRESH, N_LEADS, LEAD_TO_INDEX, ALL_LEADS, P_LEADS, PEAK_P_THRESH_II, PEAK_P_THRESH_V1, PEAK_R_THRESH, POS_QRS_THRESH, Q_AMP_THRESH, Q_DUR_THRESH, RHYTHM_LEADS, SARRH_THRESH, SIGNAL_LEN, LPR_THRESH, LQRS_THRESH, SPR_THRESH, STD_LEADS, STD_THRESH, STE_THRESH, T_LEADS, TACH_THRESH, VH_LEADS  # noqa: E501
 from src.basic.rule_ml import LT, And, Or, PipelineModule, StepModule, SeqSteps, Imply, GT, Not, ComparisonOp, get_agg_col_name
 from src.basic.dx_and_feat import Diagnosis, Feature, get_by_str
-from src.utils.train_utils import calc_output_shape
+
+
+def calc_output_shape(length_in, kernel_size, stride=1, padding=0, dilation=1):
+    """
+    calculate the shape of the output from a convolutional/maxpooling layer
+    """
+    return (length_in + 2 * padding - dilation * (kernel_size - 1) - 1) // stride + 1
 
 
 class EcgStep(StepModule):
@@ -324,7 +330,8 @@ class EcgEmbed(EcgStep):
         batch_size = batched_ecg.shape[0]
 
         if self.is_using_hard_rule:
-            self.mid_output['embed'] = torch.zeros([batch_size, N_LEADS, self.mid_output['embed_dim_per_lead']], device=batched_ecg.device)
+            self.mid_output['embed'] = torch.zeros([batch_size, N_LEADS, self.mid_output['embed_dim_per_lead']],
+                                                   device=batched_ecg.device)
             return
 
         lead_embeds = []
@@ -602,8 +609,8 @@ class STModule(EcgStep):
         # STD_aVL_imp -> IMI_imp_STD
         self.IMI_imply_STD(imply_input)
 
-        # STD_II_imp ∨ STD_III_imp ∨ STD_aVF_imp -> AMI_imp_STD ∧ LMI_imp_STD
-        self.mid_output['AMI_LMI_imply_STD_atcd'] = self.OR(
+        # GOR([STD_II_imp, STD_III_imp, STD_aVF_imp], 2) -> AMI_imp_STD ∧ LMI_imp_STD
+        self.mid_output['AMI_LMI_imply_STD_atcd'] = self.GOR(
             [self.mid_output['STD_II_imp'], self.mid_output['STD_III_imp'], self.mid_output['STD_aVF_imp']])
         self.AMI_LMI_imply_STD(imply_input)
 
@@ -611,8 +618,8 @@ class STModule(EcgStep):
         self.mid_output['LVH_imply_STD_atcd'] = self.OR([self.mid_output['STD_V5_imp'], self.mid_output['STD_V6_imp']])
         self.LVH_imply_STD(imply_input)
 
-        # STD_V1_imp ∨ STD_V2_imp ∨ STD_V3_imp -> RVH_imp_STD
-        self.mid_output['RVH_imply_STD_atcd'] = self.OR(
+        # STD_V1_imp ∧ STD_V2_imp ∧ STD_V3_imp -> RVH_imp_STD
+        self.mid_output['RVH_imply_STD_atcd'] = self.AND(
             [self.mid_output['STD_V1_imp'], self.mid_output['STD_V2_imp'], self.mid_output['STD_V3_imp']])
         self.RVH_imply_STD(imply_input)
 
@@ -677,20 +684,20 @@ class QRModule(EcgStep):
         # PRWP -> AMI_imp_PRWP ∧ LVH_imp_PRWP ∧ LBBB_imp_PRWP
         self.PRWP_imply(imply_input)
 
-        # PATH_Q_II_imp ∨ PATH_Q_III_imp ∨ PATH_Q_aVF_imp -> IMI_imp_Q
-        self.mid_output['IMI_imply_Q_atcd'] = self.OR(
+        # GOR([PATH_Q_II_imp, PATH_Q_III_imp, PATH_Q_aVF_imp], 2) -> IMI_imp_Q
+        self.mid_output['IMI_imply_Q_atcd'] = self.GOR(
             [self.mid_output['PATH_Q_II_imp'], self.mid_output['PATH_Q_III_imp'], self.mid_output['PATH_Q_aVF_imp']])
         self.IMI_imply_Q(imply_input)
 
-        # PATH_Q_V1_imp ∨ PATH_Q_V2_imp ∨ PATH_Q_V3_imp ∨ PATH_Q_V4_imp -> AMI_imp_Q
-        self.mid_output['AMI_imply_Q_atcd'] = self.OR([
+        # PATH_Q_V1_imp ∧ PATH_Q_V2_imp ∧ PATH_Q_V3_imp ∧ PATH_Q_V4_imp -> AMI_imp_Q
+        self.mid_output['AMI_imply_Q_atcd'] = self.AND([
             self.mid_output['PATH_Q_V1_imp'], self.mid_output['PATH_Q_V2_imp'], self.mid_output['PATH_Q_V3_imp'],
             self.mid_output['PATH_Q_V4_imp']
         ])
         self.AMI_imply_Q(imply_input)
 
-        # PATH_Q_I_imp ∨ PATH_Q_aVL_imp ∨ PATH_Q_V5_imp ∨ PATH_Q_V6_imp -> LMI_imp_Q
-        self.mid_output['LMI_imply_Q_atcd'] = self.OR([
+        # GOR([PATH_Q_I_imp, PATH_Q_aVL_imp, PATH_Q_V5_imp, PATH_Q_V6_imp], 2) -> LMI_imp_Q
+        self.mid_output['LMI_imply_Q_atcd'] = self.GOR([
             self.mid_output['PATH_Q_I_imp'], self.mid_output['PATH_Q_aVL_imp'], self.mid_output['PATH_Q_V5_imp'],
             self.mid_output['PATH_Q_V6_imp']
         ])
@@ -875,8 +882,8 @@ class TModule(EcgStep):
 
     def __init__(self, all_mid_output: dict[str, dict[str, torch.Tensor]], hparams, is_using_hard_rule: bool = False):
         super().__init__(self.module_name, all_mid_output, hparams, is_using_hard_rule)
-
         self.GOR = Or(self, 2)
+
         # Comparison operators
         for lead in T_LEADS:
             self.add_module(f'invt_{lead}_lt', LT(self, f'INVT_{lead}_imp', INVT_THRESH))
@@ -906,8 +913,8 @@ class TModule(EcgStep):
         decision_embed = self.imply_decision_embed_layer(focused_embed)
         imply_input = (focused_embed, decision_embed)
 
-        # GOR([INVT_imp_x ∧ (STE_x_imp ∨ STD_x_imp), for x ∈ {I, II, V3-V6}], 1) -> IMI_imp_T ∧ AMI_imp_T ∧ LMI_imp_T
-        self.mid_output['MI_imply_T_atcd'] = self.OR([
+        # GOR([INVT_imp_x ∧ (STE_x_imp ∨ STD_x_imp), for x ∈ {I, II, V3-V6}], 2) -> IMI_imp_T ∧ AMI_imp_T ∧ LMI_imp_T
+        self.mid_output['MI_imply_T_atcd'] = self.GOR([
             self.AND([
                 self.mid_output['INVT_I_imp'],
                 self.OR([
@@ -958,8 +965,8 @@ class TModule(EcgStep):
         self.mid_output['LVH_imply_T_atcd'] = self.OR([self.mid_output['INVT_V5_imp'], self.mid_output['INVT_V6_imp']])
         self.LVH_imply_T(imply_input)
 
-        # INVT_V1_imp ∨ INVT_V2_imp ∨ INVT_V3_imp -> RVH_imp_T
-        self.mid_output['RVH_imply_T_atcd'] = self.OR(
+        # INVT_V1_imp ∧ INVT_V2_imp ∧ INVT_V3_imp -> RVH_imp_T
+        self.mid_output['RVH_imply_T_atcd'] = self.AND(
             [self.mid_output['INVT_V1_imp'], self.mid_output['INVT_V2_imp'], self.mid_output['INVT_V3_imp']])
         self.RVH_imply_T(imply_input)
 

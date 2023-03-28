@@ -6,11 +6,12 @@ import pickle
 from pytorch_lightning import seed_everything
 from src.utils.data_utils import EcgDataModule
 from src.basic.constants import CHECK_VAL_EVERY_N_EPOCH, LOG_INTERVAL, MANUAL_SEED, TRAIN_LOG_PATH
+from src.models.ecg_step_module import EcgEmbed, RhythmModule, BlockModule, WPWModule, STModule, QRModule, PModule, VHModule, TModule, AxisModule
 
 import optuna
 from optuna.samplers import TPESampler, QMCSampler
 from optuna.integration import PyTorchLightningPruningCallback
-from optuna.visualization import plot_slice, plot_param_importances, plot_optimization_history
+from optuna.visualization import plot_slice, plot_optimization_history
 # from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
@@ -42,13 +43,6 @@ def flatten_dict(d, sep='_'):
     return pd.json_normalize(d, sep=sep).to_dict(orient='records')[0]
 
 
-def calc_output_shape(length_in, kernel_size, stride=1, padding=0, dilation=1):
-    """
-    calculate the shape of the output from a convolutional/maxpooling layer
-    """
-    return (length_in + 2 * padding - dilation * (kernel_size - 1) - 1) // stride + 1
-
-
 def tune(objective, n_trials=100, timeout=36000, save_dir=TRAIN_LOG_PATH, use_qmc_sampler=False, num_workers=0):
     ecg_datamodule = EcgDataModule(batch_size=4, num_workers=num_workers)
     study_file_path = os.path.join(save_dir, "study.pkl")
@@ -58,7 +52,7 @@ def tune(objective, n_trials=100, timeout=36000, save_dir=TRAIN_LOG_PATH, use_qm
         Path(save_dir).mkdir(parents=True, exist_ok=True)
         # For QMC sampler, better to set n_trials to power of 2
         sampler = QMCSampler(scramble=True, seed=MANUAL_SEED) if use_qmc_sampler else TPESampler(seed=MANUAL_SEED)
-        study = optuna.create_study(direction="minimize", sampler=sampler)
+        study = optuna.create_study(direction="maximize", sampler=sampler)
 
     study.optimize(lambda trial: objective(trial, ecg_datamodule, save_dir),
                    n_trials=n_trials,
@@ -85,10 +79,10 @@ def visualize_study(study, save_dir: str, use_lattice: bool, use_rule: bool = Tr
     # these Figure are from plotly.graph_objects
     slice_plot = plot_slice(study, params=hparams_to_check)
     slice_plot.write_image(os.path.join(save_dir, "hparams_slice_plot.png"))
-    importance_plot = plot_param_importances(study, params=hparams_to_check)
-    importance_plot.write_image(os.path.join(save_dir, "hparams_importance_plot.png"))
     history_plot = plot_optimization_history(study)
     history_plot.write_image(os.path.join(save_dir, "hparams_optimization_history.png"))
+    # importance_plot = plot_param_importances(study, params=hparams_to_check)
+    # importance_plot.write_image(os.path.join(save_dir, "hparams_importance_plot.png"))
 
 
 def print_best_trial(study: optuna.Trial):
@@ -110,6 +104,7 @@ def get_common_trainer_params() -> dict:
         'accelerator': 'gpu' if torch.cuda.is_available() else 'cpu',
         'devices': [0] if torch.cuda.is_available() else None,
         'precision': 'bf16',
+        # 'precision': '32',
         'log_every_n_steps': LOG_INTERVAL,
         'check_val_every_n_epoch': CHECK_VAL_EVERY_N_EPOCH,
         'enable_progress_bar': False,
@@ -118,15 +113,15 @@ def get_common_trainer_params() -> dict:
 
 
 def get_trainer_callbacks(trial, save_top_k: int):
-    optuna_pruning = PyTorchLightningPruningCallback(trial, monitor="val_loss/total_loss")
+    optuna_pruning = PyTorchLightningPruningCallback(trial, monitor="val_metrics/auroc")
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
     # device_monitor = DeviceStatsMonitor(cpu_stats=True)
     # early_stop_callback = EarlyStopping(monitor="val_loss/total_loss", min_delta=0.000001, patience=5, mode="min")
     checkpoint_callback = ModelCheckpoint(save_top_k=save_top_k,
-                                          monitor="val_loss/total_loss",
-                                          mode="min",
+                                          monitor="val_metrics/auroc",
+                                          mode="max",
                                           save_last=True,
-                                          filename="epoch={epoch}-step={step}-val_loss={val_loss/total_loss:.7f}",
+                                          filename="epoch={epoch}-step={step}-auroc={val_metrics/auroc:.7f}",
                                           auto_insert_metric_name=False)
     checkpoint_callback.CHECKPOINT_NAME_LAST = "epoch={epoch}-step={step}-last"
 
@@ -136,6 +131,23 @@ def get_trainer_callbacks(trial, save_top_k: int):
 ########################################################################
 # Hyperparameter tuning
 ########################################################################
+
+
+def get_hparams(trial: optuna.Trial, use_mpav, use_lattice) -> dict:
+    ecg_step_hparams = {
+        EcgEmbed.__name__: get_ecg_embed_hparams(trial),
+        RhythmModule.__name__: get_rhythm_hparams(trial, use_mpav, use_lattice),
+        BlockModule.__name__: get_block_hparams(trial, use_mpav, use_lattice),
+        WPWModule.__name__: get_wpw_hparams(trial, use_mpav, use_lattice),
+        STModule.__name__: get_st_hparams(trial, use_mpav, use_lattice),
+        QRModule.__name__: get_qr_hparams(trial, use_mpav, use_lattice),
+        PModule.__name__: get_p_hparams(trial, use_mpav, use_lattice),
+        VHModule.__name__: get_vh_hparams(trial, use_mpav, use_lattice),
+        TModule.__name__: get_t_hparams(trial, use_mpav, use_lattice),
+        AxisModule.__name__: get_axis_hparams(trial, use_mpav, use_lattice)
+    }
+
+    return {**get_pipeline_hparams(trial), 'optim': get_optim_hparams(trial), **ecg_step_hparams}
 
 
 def get_dummy_hparams() -> dict:
@@ -183,11 +195,11 @@ def get_dummy_hparams() -> dict:
 
 def get_optim_hparams(trial: optuna.Trial) -> dict:
     return {
-        'lr': trial.suggest_float('lr', 1e-5, 1e-1, log=True),
-        'beta1': trial.suggest_float('beta1', 0.5, 0.99),
-        'eps': trial.suggest_float('eps', 1e-8, 1e-4, log=True),
-        'beta2': trial.suggest_float('beta2', 0.8, 0.99),
-        'exp_lr_gamma': trial.suggest_float('exp_lr_gamma', 0.5, 1)
+        'lr': trial.suggest_float('lr', 1e-4, 1e-2, log=True),
+        'beta1': trial.suggest_float('beta1', 0.9, 0.99),
+        'eps': trial.suggest_float('eps', 1e-8, 1e-6, log=True),
+        'beta2': trial.suggest_float('beta2', 0.9, 0.9999),
+        'exp_lr_gamma': trial.suggest_float('exp_lr_gamma', 0.95, 1)
     }
 
 
@@ -196,14 +208,14 @@ def get_pipeline_hparams(trial: optuna.Trial) -> dict:
         # 'feat_loss_weight': trial.suggest_float('feat_loss_weight', 1e-2, 1e2, log=True),
         # 'delta_loss_weight': trial.suggest_float('delta_loss_weight', 1e-2, 1e4, log=True),
         'feat_loss_weight': 1,
-        'delta_loss_weight': 1000,
+        'delta_loss_weight': 10,
         'is_agg_mid_output': True,
         'is_using_hard_rule': False
     }
 
 
 def get_basic_cnn_hparams(trial: optuna.Trial) -> dict:
-    embed_n_conv_layers = trial.suggest_int('Embed_n_conv_layers', 1, 5)
+    embed_n_conv_layers = trial.suggest_int('Embed_n_conv_layers', 1, 3)
     embed_conv_out_channels = [
         trial.suggest_int(f"Embed_conv_out_ch_l{i}", 4, 256, log=True) for i in range(embed_n_conv_layers)
     ]
@@ -213,7 +225,7 @@ def get_basic_cnn_hparams(trial: optuna.Trial) -> dict:
     embed_pool_kernel_size = trial.suggest_int('Embed_pool_kernel_size', 1, 2)
     embed_pool_stride = trial.suggest_int('Embed_pool_stride', 1, embed_pool_kernel_size)
 
-    embed_n_fc_layers = trial.suggest_int('Embed_n_fc_layers', 1, 5)
+    embed_n_fc_layers = trial.suggest_int('Embed_n_fc_layers', 1, 3)
     embed_fc_out_dims = [
         trial.suggest_int(f"Embed_fc_out_dim_l{i}", 4, 256, log=True) for i in range(embed_n_fc_layers)
     ]
@@ -240,7 +252,7 @@ def get_dummy_ecg_embed_hparams() -> dict:
 
 
 def get_ecg_embed_hparams(trial: optuna.Trial) -> dict:
-    embed_n_conv_layers = trial.suggest_int('Embed_n_conv_layers', 1, 5)
+    embed_n_conv_layers = trial.suggest_int('Embed_n_conv_layers', 1, 3)
     embed_conv_out_channels = [
         trial.suggest_int(f"Embed_conv_out_ch_l{i}", 4, 256, log=True) for i in range(embed_n_conv_layers)
     ]
@@ -249,7 +261,7 @@ def get_ecg_embed_hparams(trial: optuna.Trial) -> dict:
     embed_pool_kernel_size = trial.suggest_int('Embed_pool_kernel_size', 1, 2)
     embed_pool_stride = trial.suggest_int('Embed_pool_stride', 1, embed_pool_kernel_size)
 
-    embed_n_fc_layers = trial.suggest_int('Embed_n_fc_layers', 1, 5)
+    embed_n_fc_layers = trial.suggest_int('Embed_n_fc_layers', 1, 3)
     embed_fc_out_dims = [
         trial.suggest_int(f"Embed_fc_out_dim_l{i}", 4, 256, log=True) for i in range(embed_n_fc_layers - 1)
     ] + [trial.suggest_int(f"Embed_fc_out_dim_l{embed_n_fc_layers - 1}", 4, 64, log=True)]
@@ -273,7 +285,7 @@ def get_imply_hparams(trial: optuna.Trial, use_mpav: bool, use_lattice: bool, pr
     imply_fc_out_dims = [
         trial.suggest_int(f"{prefix}_Imply_fc_out_dim_l{i}", 4, 256, log=True) for i in range(imply_n_fc_layers)
     ]
-    lattice_sizes = [trial.suggest_int(f"{prefix}_Imply_lattice_size", 2, 16, log=True)] if use_lattice else []
+    lattice_sizes = [trial.suggest_int(f"{prefix}_Imply_lattice_size", 2, 6)] if use_lattice else []
 
     return {'output_dims': imply_fc_out_dims, 'use_mpav': use_mpav, 'lattice_sizes': lattice_sizes}
 

@@ -6,7 +6,7 @@ import torch
 from torch import optim
 import torch.nn as nn
 import pytorch_lightning as pl
-# from pytorch_lightning.utilities import grad_norm
+from pytorch_lightning.utilities import grad_norm
 from pytorch_lightning.loggers import TensorBoardLogger
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset
@@ -182,7 +182,7 @@ class SeqSteps(StepModule):
                 all_feat_loss.append(feat_loss)
             if delta_loss:
                 all_delta_loss.append(delta_loss)
-        loss = {'feat': float(sum(all_feat_loss)), 'delta': float(sum(all_delta_loss))}
+        loss = {'feat': sum(all_feat_loss), 'delta': sum(all_delta_loss)}
         self.mid_output['loss'] = loss
         return loss
 
@@ -515,8 +515,8 @@ class PipelineModule(pl.LightningModule):
 
     def on_before_optimizer_step(self, optimizer, optimizer_idx):
         # need to remove optimizer_idx if migrated to pytorch-lightning 2.0
-        # self.log_dict(grad_norm(self, norm_type=2))
-        pass
+        self.log_dict(grad_norm(self, norm_type=2))
+        # pass
 
 
 ########################################
@@ -727,9 +727,13 @@ class ComparisonOp(Predicate):
         self.w = nn.Parameter(torch.ones(1, dtype=torch.float32), requires_grad=True)
         self.delta = nn.Parameter(torch.zeros(1, dtype=torch.float32), requires_grad=True)
 
+    @property
+    def sign(self) -> int:
+        return 1 if self.is_gt else -1
+
     def apply_soft_rule(self, term):
         # term is of shape (batch_size,)
-        return torch.sigmoid(int(self.is_gt) * torch.abs(self.w) * (term - self.threshold * (1 + self.delta)))
+        return torch.sigmoid(self.sign * torch.abs(self.w) * (term - self.threshold * (1 + self.delta)))
 
     def apply_hard_rule(self, term):
         return float(term > self.threshold) if self.is_gt else float(term < self.threshold)
