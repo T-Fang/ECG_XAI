@@ -9,7 +9,7 @@ from src.utils.data_utils import EcgDataModule
 from src.utils.train_utils import get_basic_cnn_hparams, get_common_trainer_params, get_optim_hparams, get_trainer_callbacks, tune, visualize_study  # noqa: E501
 
 # not-tuned Parameters
-N_WORKERS = 12
+N_WORKERS = 8
 USE_QMC = True
 N_TRIALS = 32
 TIMEOUT = 86400

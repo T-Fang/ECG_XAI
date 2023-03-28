@@ -9,7 +9,7 @@ from src.utils.data_utils import EcgDataModule
 from src.utils.train_utils import get_axis_hparams, get_block_hparams, get_common_trainer_params, get_ecg_embed_hparams, get_optim_hparams, get_p_hparams, get_pipeline_hparams, get_qr_hparams, get_rhythm_hparams, get_st_hparams, get_t_hparams, get_trainer_callbacks, get_vh_hparams, get_wpw_hparams, tune, visualize_study  # noqa: E501
 
 # not-tuned Parameters
-N_WORKERS = 0
+N_WORKERS = 8
 USE_QMC = True
 N_TRIALS = 2
 TIMEOUT = 86400

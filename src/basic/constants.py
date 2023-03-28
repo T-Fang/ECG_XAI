@@ -100,7 +100,7 @@ DOM_S_THRESH = 1
 
 # ECG thresholds for TModule
 T_LEADS = ['I', 'II', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']
-INVT_THRESH = 0
+INVT_THRESH = -0.1
 
 # ECG thresholds for AxisModule
 AXIS_LEADS = ['I', 'aVF']
