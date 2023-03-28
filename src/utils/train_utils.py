@@ -1,8 +1,8 @@
 import os
 from pathlib import Path
+import pandas as pd
 import torch
 import pickle
-import collections
 from pytorch_lightning import seed_everything
 from src.utils.data_utils import EcgDataModule
 from src.basic.constants import CHECK_VAL_EVERY_N_EPOCH, LOG_INTERVAL, MANUAL_SEED, TRAIN_LOG_PATH
@@ -38,15 +38,8 @@ def set_gpu_device(gpu_number=0):
     return device, run_on_gpu
 
 
-def flatten_dict(d, parent_key='', sep='_'):
-    items = []
-    for k, v in d.items():
-        new_key = parent_key + sep + k if parent_key else k
-        if isinstance(v, collections.MutableMapping):
-            items.extend(flatten_dict(v, new_key, sep=sep).items())
-        else:
-            items.append((new_key, v))
-    return dict(items)
+def flatten_dict(d, sep='_'):
+    return pd.json_normalize(d, sep=sep).to_dict(orient='records')[0]
 
 
 def calc_output_shape(length_in, kernel_size, stride=1, padding=0, dilation=1):
