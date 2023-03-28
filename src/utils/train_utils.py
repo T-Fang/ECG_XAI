@@ -11,7 +11,7 @@ from optuna.samplers import TPESampler, QMCSampler
 from optuna.integration import PyTorchLightningPruningCallback
 from optuna.visualization import plot_slice, plot_param_importances, plot_optimization_history
 # from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
 
 def seed_all():
@@ -44,8 +44,8 @@ def calc_output_shape(length_in, kernel_size, stride=1, padding=0, dilation=1):
     return (length_in + 2 * padding - dilation * (kernel_size - 1) - 1) // stride + 1
 
 
-def tune(objective, n_trials=100, timeout=36000, save_dir=TRAIN_LOG_PATH, use_qmc_sampler=False):
-    ecg_datamodule = EcgDataModule(batch_size=512)
+def tune(objective, n_trials=100, timeout=36000, save_dir=TRAIN_LOG_PATH, use_qmc_sampler=False, num_workers=0):
+    ecg_datamodule = EcgDataModule(batch_size=4, num_workers=num_workers)
     study_file_path = os.path.join(save_dir, "study.pkl")
     if os.path.isfile(study_file_path):
         study = pickle.load(open(study_file_path, "rb"))
@@ -99,7 +99,8 @@ def print_best_trial(study: optuna.Trial):
 
 def get_common_trainer_params() -> dict:
     return {
-        'accelerator': 'auto',
+        'accelerator': 'gpu' if torch.cuda.is_available() else 'cpu',
+        'devices': [0] if torch.cuda.is_available() else None,
         'precision': 'bf16',
         'log_every_n_steps': LOG_INTERVAL,
         'check_val_every_n_epoch': CHECK_VAL_EVERY_N_EPOCH,
@@ -111,7 +112,7 @@ def get_common_trainer_params() -> dict:
 def get_trainer_callbacks(trial, save_top_k: int):
     optuna_pruning = PyTorchLightningPruningCallback(trial, monitor="val_loss/total_loss")
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
-    device_monitor = DeviceStatsMonitor(cpu_stats=True)
+    # device_monitor = DeviceStatsMonitor(cpu_stats=True)
     # early_stop_callback = EarlyStopping(monitor="val_loss/total_loss", min_delta=0.000001, patience=5, mode="min")
     checkpoint_callback = ModelCheckpoint(save_top_k=save_top_k,
                                           monitor="val_loss/total_loss",
@@ -121,12 +122,12 @@ def get_trainer_callbacks(trial, save_top_k: int):
                                           auto_insert_metric_name=False)
     checkpoint_callback.CHECKPOINT_NAME_LAST = "epoch={epoch}-step={step}-last"
 
-    return [checkpoint_callback, lr_monitor, optuna_pruning, device_monitor]
+    return [checkpoint_callback, lr_monitor, optuna_pruning]
 
 
-####################################
+########################################################################
 # Hyperparameter tuning
-####################################
+########################################################################
 
 
 def get_dummy_hparams() -> dict:
@@ -184,8 +185,10 @@ def get_optim_hparams(trial: optuna.Trial) -> dict:
 
 def get_pipeline_hparams(trial: optuna.Trial) -> dict:
     return {
-        'feat_loss_weight': trial.suggest_float('feat_loss_weight', 1e-2, 1e2, log=True),
-        'delta_loss_weight': trial.suggest_float('delta_loss_weight', 1e-2, 1e4, log=True),
+        # 'feat_loss_weight': trial.suggest_float('feat_loss_weight', 1e-2, 1e2, log=True),
+        # 'delta_loss_weight': trial.suggest_float('delta_loss_weight', 1e-2, 1e4, log=True),
+        'feat_loss_weight': 1,
+        'delta_loss_weight': 1000,
         'is_agg_mid_output': True,
         'is_using_hard_rule': False
     }

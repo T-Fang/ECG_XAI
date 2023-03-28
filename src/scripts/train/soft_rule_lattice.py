@@ -37,7 +37,7 @@ def get_hparams(trial: optuna.Trial) -> dict:
     return {**get_pipeline_hparams(trial), 'optim': get_optim_hparams(trial), **ecg_step_hparams}
 
 
-def objective_soft_rule_mpav(trial: optuna.Trial, datamodule: EcgDataModule, save_dir: str):
+def objective(trial: optuna.Trial, datamodule: EcgDataModule, save_dir: str):
     hparams = get_hparams(trial)
     model = EcgPipeline(hparams)
 
@@ -45,7 +45,7 @@ def objective_soft_rule_mpav(trial: optuna.Trial, datamodule: EcgDataModule, sav
         callbacks=get_trainer_callbacks(trial, SAVE_TOP_K),
         logger=TensorBoardLogger(save_dir=save_dir),
         max_epochs=MAX_EPOCHS,
-        # auto_scale_batch_size='binsearch',  # Use Tuner for pytorch_lightning >= 2.0
+        auto_scale_batch_size='power',  # Use Tuner for pytorch_lightning >= 2.0
         # limit_train_batches=2,
         # limit_val_batches=2,
         **get_common_trainer_params())
@@ -61,7 +61,7 @@ def objective_soft_rule_mpav(trial: optuna.Trial, datamodule: EcgDataModule, sav
 
 
 if __name__ == '__main__':
-    study = tune(objective_soft_rule_mpav,
+    study = tune(objective,
                  n_trials=N_TRIALS,
                  timeout=TIMEOUT,
                  save_dir=SAVE_DIR,

@@ -113,7 +113,8 @@ class EcgStep(StepModule):
         objective_feat = get_by_str(batched_obj_feat, self.obj_feat_names, Feature)
         feat_impressions = [self.mid_output[feat_imp_name] for feat_imp_name in self.feat_imp_names]
         feat_impressions = torch.stack(feat_impressions, dim=1)
-        feat_loss = self.loss_fn(feat_impressions, objective_feat)
+        with torch.cuda.amp.autocast(enabled=False):
+            feat_loss = self.loss_fn(feat_impressions.float(), objective_feat.float())
 
         # delta loss
         delta_loss = sum([comp_op.delta_loss for comp_op in self.comp_ops])
@@ -323,7 +324,7 @@ class EcgEmbed(EcgStep):
         batch_size = batched_ecg.shape[0]
 
         if self.is_using_hard_rule:
-            self.mid_output['embed'] = torch.zeros([batch_size, N_LEADS, self.mid_output['embed_dim_per_lead']])
+            self.mid_output['embed'] = torch.zeros([batch_size, N_LEADS, self.mid_output['embed_dim_per_lead']], device=batched_ecg.device)
             return
 
         lead_embeds = []
@@ -331,7 +332,7 @@ class EcgEmbed(EcgStep):
             lead_signal = batched_ecg[:, [i], :]
             lead_embed = self.conv_layers(lead_signal)
             lead_embed = lead_embed.view(-1, self.conv_embed_dim)
-            lead_index = torch.ones([batch_size, 1]) * i
+            lead_index = torch.ones([batch_size, 1], device=lead_embed.device) * i
             embed_with_index = torch.cat((lead_index, lead_embed), dim=1)
             lead_embed = self.fc_layers(embed_with_index)
             lead_embeds.append(lead_embed)

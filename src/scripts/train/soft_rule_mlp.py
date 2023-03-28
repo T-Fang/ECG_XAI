@@ -9,10 +9,11 @@ from src.utils.data_utils import EcgDataModule
 from src.utils.train_utils import get_axis_hparams, get_block_hparams, get_common_trainer_params, get_ecg_embed_hparams, get_optim_hparams, get_p_hparams, get_pipeline_hparams, get_qr_hparams, get_rhythm_hparams, get_st_hparams, get_t_hparams, get_trainer_callbacks, get_vh_hparams, get_wpw_hparams, tune, visualize_study  # noqa: E501
 
 # not-tuned Parameters
+N_WORKERS = 0
 USE_QMC = True
-N_TRIALS = 64
+N_TRIALS = 2
 TIMEOUT = 86400
-MAX_EPOCHS = 50
+MAX_EPOCHS = 2
 SAVE_TOP_K = 5
 USE_MPAV = False
 USE_LATTICE = False
@@ -37,7 +38,7 @@ def get_hparams(trial: optuna.Trial) -> dict:
     return {**get_pipeline_hparams(trial), 'optim': get_optim_hparams(trial), **ecg_step_hparams}
 
 
-def objective_soft_rule_mpav(trial: optuna.Trial, datamodule: EcgDataModule, save_dir: str):
+def objective(trial: optuna.Trial, datamodule: EcgDataModule, save_dir: str):
     hparams = get_hparams(trial)
     model = EcgPipeline(hparams)
 
@@ -45,25 +46,28 @@ def objective_soft_rule_mpav(trial: optuna.Trial, datamodule: EcgDataModule, sav
         callbacks=get_trainer_callbacks(trial, SAVE_TOP_K),
         logger=TensorBoardLogger(save_dir=save_dir),
         max_epochs=MAX_EPOCHS,
-        # auto_scale_batch_size='binsearch',  # Use Tuner for pytorch_lightning >= 2.0
+        auto_scale_batch_size='power',  # Use Tuner for pytorch_lightning >= 2.0
         # limit_train_batches=2,
         # limit_val_batches=2,
         **get_common_trainer_params())
 
     # record hyperparameters
     trainer.logger.log_hyperparams(hparams)
-    trainer.fit(model, datamodule)
 
-    # tuner.scale_batch_size(model, datamodule=datamodule, mode="binsearch")
+    trainer.tune(model, datamodule=datamodule)
+    # tuner.scale_batch_size(model, datamodule=datamodule, mode="binsearch")  # for pl >= 2.0
     print('Using batch size: ', datamodule.hparams.batch_size)
+
+    trainer.fit(model, datamodule)
 
     return trainer.callback_metrics["val_loss/total_loss"].item()
 
 
 if __name__ == '__main__':
-    study = tune(objective_soft_rule_mpav,
+    study = tune(objective,
                  n_trials=N_TRIALS,
                  timeout=TIMEOUT,
                  save_dir=SAVE_DIR,
-                 use_qmc_sampler=USE_QMC)
+                 use_qmc_sampler=USE_QMC,
+                 num_workers=N_WORKERS)
     visualize_study(study, SAVE_DIR, USE_LATTICE)

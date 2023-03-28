@@ -6,7 +6,7 @@ import torch
 from torch import optim
 import torch.nn as nn
 import pytorch_lightning as pl
-from pytorch_lightning.utilities import grad_norm
+# from pytorch_lightning.utilities import grad_norm
 from pytorch_lightning.loggers import TensorBoardLogger
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset
@@ -350,7 +350,8 @@ class PipelineModule(pl.LightningModule):
         loss = self.pipeline.mid_output['loss']
         feat_loss, delta_loss = loss['feat'], loss['delta']
 
-        dx_loss = self.loss_fn(y_hat, y)
+        with torch.cuda.amp.autocast(enabled=False):
+            dx_loss = self.loss_fn(y_hat.float(), y.float())
         y = y.int()
         return (y_hat, y), (dx_loss, feat_loss, delta_loss)
 
@@ -472,11 +473,12 @@ class PipelineModule(pl.LightningModule):
         Aggregate mid_output_agg into a pandas DataFrame and save to csv
         """
         for col_name, all_values in self.mid_output_agg.items():
-            self.mid_output_agg[col_name] = torch.cat(all_values, dim=0).float()
-        mid_output_agg_df = pd.DataFrame(self.mid_output_agg)
-        mid_output_agg_path = os.path.join(self.mid_output_agg_dir,
-                                           f'{phase}_epoch_{self.current_epoch}_mid_output_agg.csv')
-        mid_output_agg_df.to_csv(mid_output_agg_path)
+            self.mid_output_agg[col_name] = torch.cat(all_values, dim=0).float().cpu()
+            print(f'{col_name} shape: {self.mid_output_agg[col_name].shape}')
+            mid_output_agg_df = pd.DataFrame(self.mid_output_agg)
+            mid_output_agg_path = os.path.join(self.mid_output_agg_dir,
+                                               f'{phase}_epoch_{self.current_epoch}_mid_output_agg.csv')
+            mid_output_agg_df.to_csv(mid_output_agg_path)
 
     def compare_agg_via_scatter(self, phase: str):
         """
@@ -514,7 +516,8 @@ class PipelineModule(pl.LightningModule):
 
     def on_before_optimizer_step(self, optimizer, optimizer_idx):
         # need to remove optimizer_idx if migrated to pytorch-lightning 2.0
-        self.log_dict(grad_norm(self, norm_type=2))
+        # self.log_dict(grad_norm(self, norm_type=2))
+        pass
 
 
 ########################################
