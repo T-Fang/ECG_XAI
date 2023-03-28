@@ -474,11 +474,10 @@ class PipelineModule(pl.LightningModule):
         """
         for col_name, all_values in self.mid_output_agg.items():
             self.mid_output_agg[col_name] = torch.cat(all_values, dim=0).float().cpu()
-            print(f'{col_name} shape: {self.mid_output_agg[col_name].shape}')
-            mid_output_agg_df = pd.DataFrame(self.mid_output_agg)
-            mid_output_agg_path = os.path.join(self.mid_output_agg_dir,
-                                               f'{phase}_epoch_{self.current_epoch}_mid_output_agg.csv')
-            mid_output_agg_df.to_csv(mid_output_agg_path)
+        mid_output_agg_df = pd.DataFrame(self.mid_output_agg)
+        mid_output_agg_path = os.path.join(self.mid_output_agg_dir,
+                                           f'{phase}_epoch_{self.current_epoch}_mid_output_agg.csv')
+        mid_output_agg_df.to_csv(mid_output_agg_path)
 
     def compare_agg_via_scatter(self, phase: str):
         """
