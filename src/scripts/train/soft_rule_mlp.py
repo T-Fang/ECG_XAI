@@ -6,14 +6,14 @@ import init_train  # noqa: F401
 from src.models.ecg_step_module import EcgEmbed, RhythmModule, BlockModule, WPWModule, STModule, QRModule, PModule, VHModule, TModule, AxisModule, EcgPipeline  # noqa: E501
 from src.basic.constants import TRAIN_LOG_PATH
 from src.utils.data_utils import EcgDataModule
-from src.utils.train_utils import get_axis_hparams, get_block_hparams, get_common_trainer_params, get_ecg_embed_hparams, get_optim_hparams, get_p_hparams, get_pipeline_hparams, get_qr_hparams, get_rhythm_hparams, get_st_hparams, get_t_hparams, get_trainer_callbacks, get_vh_hparams, get_wpw_hparams, tune, visualize_study  # noqa: E501
+from src.utils.train_utils import flatten_dict, get_axis_hparams, get_block_hparams, get_common_trainer_params, get_ecg_embed_hparams, get_optim_hparams, get_p_hparams, get_pipeline_hparams, get_qr_hparams, get_rhythm_hparams, get_st_hparams, get_t_hparams, get_trainer_callbacks, get_vh_hparams, get_wpw_hparams, tune, visualize_study  # noqa: E501
 
 # not-tuned Parameters
 N_WORKERS = 8
 USE_QMC = True
-N_TRIALS = 2
+N_TRIALS = 4
 TIMEOUT = 86400
-MAX_EPOCHS = 2
+MAX_EPOCHS = 30
 SAVE_TOP_K = 5
 USE_MPAV = False
 USE_LATTICE = False
@@ -52,7 +52,7 @@ def objective(trial: optuna.Trial, datamodule: EcgDataModule, save_dir: str):
         **get_common_trainer_params())
 
     # record hyperparameters
-    trainer.logger.log_hyperparams(hparams)
+    trainer.logger.log_hyperparams(flatten_dict(hparams))
 
     trainer.tune(model, datamodule=datamodule)
     # tuner.scale_batch_size(model, datamodule=datamodule, mode="binsearch")  # for pl >= 2.0

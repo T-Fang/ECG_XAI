@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import torch
 import pickle
+import collections
 from pytorch_lightning import seed_everything
 from src.utils.data_utils import EcgDataModule
 from src.basic.constants import CHECK_VAL_EVERY_N_EPOCH, LOG_INTERVAL, MANUAL_SEED, TRAIN_LOG_PATH
@@ -37,6 +38,17 @@ def set_gpu_device(gpu_number=0):
     return device, run_on_gpu
 
 
+def flatten_dict(d, parent_key='', sep='_'):
+    items = []
+    for k, v in d.items():
+        new_key = parent_key + sep + k if parent_key else k
+        if isinstance(v, collections.MutableMapping):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+
 def calc_output_shape(length_in, kernel_size, stride=1, padding=0, dilation=1):
     """
     calculate the shape of the output from a convolutional/maxpooling layer
@@ -55,7 +67,10 @@ def tune(objective, n_trials=100, timeout=36000, save_dir=TRAIN_LOG_PATH, use_qm
         sampler = QMCSampler(scramble=True, seed=MANUAL_SEED) if use_qmc_sampler else TPESampler(seed=MANUAL_SEED)
         study = optuna.create_study(direction="minimize", sampler=sampler)
 
-    study.optimize(lambda trial: objective(trial, ecg_datamodule, save_dir), n_trials=n_trials, timeout=timeout)
+    study.optimize(lambda trial: objective(trial, ecg_datamodule, save_dir),
+                   n_trials=n_trials,
+                   timeout=timeout,
+                   catch=[torch.cuda.OutOfMemoryError])
 
     print_best_trial(study)
     pickle.dump(study, open(study_file_path, "wb"))
@@ -179,7 +194,7 @@ def get_optim_hparams(trial: optuna.Trial) -> dict:
         'beta1': trial.suggest_float('beta1', 0.5, 0.99),
         'eps': trial.suggest_float('eps', 1e-8, 1e-4, log=True),
         'beta2': trial.suggest_float('beta2', 0.8, 0.99),
-        'exp_lr_gamma': trial.suggest_float('exp_lr_gamma', 0.1, 1)
+        'exp_lr_gamma': trial.suggest_float('exp_lr_gamma', 0.5, 1)
     }
 
 

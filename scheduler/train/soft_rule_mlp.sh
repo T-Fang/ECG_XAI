@@ -2,7 +2,7 @@
 
 ngpus='1'
 ncpus='8'
-mem='70G'
+mem='80G'
 walltime='25:00:00'
 name='soft_rule_mlp'
 script_location='/home/ftian/storage/ECG_XAI/src/scripts/train/soft_rule_mlp.py'

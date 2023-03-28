@@ -6,12 +6,12 @@ import init_train  # noqa: F401
 from src.models.ecg_step_module import BasicCnn, BasicCnnPipeline
 from src.basic.constants import TRAIN_LOG_PATH
 from src.utils.data_utils import EcgDataModule
-from src.utils.train_utils import get_basic_cnn_hparams, get_common_trainer_params, get_optim_hparams, get_trainer_callbacks, tune, visualize_study  # noqa: E501
+from src.utils.train_utils import flatten_dict, get_basic_cnn_hparams, get_common_trainer_params, get_optim_hparams, get_trainer_callbacks, tune, visualize_study  # noqa: E501
 
 # not-tuned Parameters
 N_WORKERS = 8
 USE_QMC = True
-N_TRIALS = 32
+N_TRIALS = 4
 TIMEOUT = 86400
 MAX_EPOCHS = 30
 SAVE_TOP_K = 5
@@ -46,7 +46,7 @@ def objective(trial: optuna.Trial, datamodule: EcgDataModule, save_dir: str):
         **get_common_trainer_params())
 
     # record hyperparameters
-    trainer.logger.log_hyperparams(hparams)
+    trainer.logger.log_hyperparams(flatten_dict(hparams))
 
     trainer.tune(model, datamodule=datamodule)
     # tuner.scale_batch_size(model, datamodule=datamodule, mode="binsearch")
