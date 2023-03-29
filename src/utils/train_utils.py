@@ -14,6 +14,7 @@ from optuna.integration import PyTorchLightningPruningCallback
 from optuna.visualization import plot_slice, plot_optimization_history
 # from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.accelerators import find_usable_cuda_devices
 
 
 def seed_all():
@@ -24,6 +25,15 @@ def seed_all():
     # torch.manual_seed(MANUAL_SEED)
     # np.random.seed(MANUAL_SEED)
     seed_everything(MANUAL_SEED)
+
+
+def set_cuda_env(gpu_ids='1'):
+    os.environ["CUDA_VISIBLE_DEVICES"] = gpu_ids
+    for i in range(torch.cuda.device_count()):
+        info = torch.cuda.get_device_properties(i)
+        print(f"CUDA:{i} {info.name}, {info.total_memory / 1024 ** 2}MB")
+    # torch.cuda.set_device(0)
+    torch.set_float32_matmul_precision('medium')
 
 
 def set_gpu_device(gpu_number=0):
@@ -43,7 +53,13 @@ def flatten_dict(d, sep='_'):
     return pd.json_normalize(d, sep=sep).to_dict(orient='records')[0]
 
 
-def tune(objective, n_trials=100, timeout=36000, save_dir=TRAIN_LOG_PATH, use_qmc_sampler=False, num_workers=0):
+def tune(objective,
+         n_trials=100,
+         timeout=36000,
+         save_dir=TRAIN_LOG_PATH,
+         use_qmc_sampler=False,
+         num_workers=0,
+         seed: int = MANUAL_SEED):
     ecg_datamodule = EcgDataModule(batch_size=4, num_workers=num_workers)
     study_file_path = os.path.join(save_dir, "study.pkl")
     if os.path.isfile(study_file_path):
@@ -51,7 +67,7 @@ def tune(objective, n_trials=100, timeout=36000, save_dir=TRAIN_LOG_PATH, use_qm
     else:
         Path(save_dir).mkdir(parents=True, exist_ok=True)
         # For QMC sampler, better to set n_trials to power of 2
-        sampler = QMCSampler(scramble=True, seed=MANUAL_SEED) if use_qmc_sampler else TPESampler(seed=MANUAL_SEED)
+        sampler = QMCSampler(scramble=True, seed=seed) if use_qmc_sampler else TPESampler(seed=seed)
         study = optuna.create_study(direction="maximize", sampler=sampler)
 
     study.optimize(lambda trial: objective(trial, ecg_datamodule, save_dir),
@@ -102,7 +118,7 @@ def print_best_trial(study: optuna.Trial):
 def get_common_trainer_params() -> dict:
     return {
         'accelerator': 'gpu' if torch.cuda.is_available() else 'cpu',
-        'devices': [0] if torch.cuda.is_available() else None,
+        'devices': find_usable_cuda_devices(1) if torch.cuda.is_available() else None,
         'precision': 'bf16',
         # 'precision': '32',
         'log_every_n_steps': LOG_INTERVAL,
@@ -195,7 +211,7 @@ def get_dummy_hparams() -> dict:
 
 def get_optim_hparams(trial: optuna.Trial) -> dict:
     return {
-        'lr': trial.suggest_float('lr', 1e-4, 1e-2, log=True),
+        'lr': trial.suggest_float('lr', 1e-4, 1e-1, log=True),
         'beta1': trial.suggest_float('beta1', 0.9, 0.99),
         'eps': trial.suggest_float('eps', 1e-8, 1e-6, log=True),
         'beta2': trial.suggest_float('beta2', 0.9, 0.9999),
@@ -207,7 +223,7 @@ def get_pipeline_hparams(trial: optuna.Trial) -> dict:
     return {
         # 'feat_loss_weight': trial.suggest_float('feat_loss_weight', 1e-2, 1e2, log=True),
         # 'delta_loss_weight': trial.suggest_float('delta_loss_weight', 1e-2, 1e4, log=True),
-        'feat_loss_weight': 1,
+        'feat_loss_weight': 0.1,
         'delta_loss_weight': 10,
         'is_agg_mid_output': True,
         'is_using_hard_rule': False

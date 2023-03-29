@@ -2,10 +2,10 @@
 
 ngpus='1'
 ncpus='4'
-mem='70G'
+mem='60G'
 walltime='25:00:00'
-name='basic_cnn'
-script_location='/home/ftian/storage/ECG_XAI/src/scripts/train/basic_cnn.py'
+name='mpav'
+script_location='/home/ftian/storage/ECG_XAI/src/scripts/train/soft_rule_mpav.py'
 activate='/home/ftian/miniconda3/bin/activate'
 deactivate='/home/ftian/miniconda3/bin/deactivate'
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ngpus='1'
-ncpus='8'
+ncpus='4'
 mem='70G'
 walltime='25:00:00'
 name='soft_rule_mlp'
