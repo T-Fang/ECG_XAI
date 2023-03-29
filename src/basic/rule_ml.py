@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import Dataset
 # from pmlayer.torch.layers import HLattice
 from src.models.lattice import HL
+# from pmlayer.torch.hierarchical_lattice_layer import HLattice
 from torchmetrics import MetricCollection
 from torchmetrics.classification import MultilabelAccuracy, MultilabelAUROC, MultilabelAveragePrecision
 from src.basic.dx_and_feat import Diagnosis, Feature
@@ -90,6 +91,7 @@ class StepModule(nn.Module):
         self.id: str = id
         self.all_mid_output: dict[str, dict[str, torch.Tensor]] = all_mid_output
         self.all_mid_output[id] = {}
+        self.hparams = hparams
         self.is_using_hard_rule: bool = is_using_hard_rule
 
     def clear_mid_output(self):
@@ -605,6 +607,15 @@ class Not(LogicConnect):
         return 1 - x
 
 
+RHO = 8
+LATTICE_MULTIPLIER = 1e4
+
+
+def inverse_sigmoid(t: torch.Tensor) -> torch.Tensor:
+    EPS = 1e-7
+    return torch.log((t + EPS) / (1 - t + EPS))
+
+
 class Imply(LogicConnect):
     # a.k.a implication
     def __init__(self, step_module: StepModule, hparams: dict):
@@ -627,7 +638,8 @@ class Imply(LogicConnect):
         else:
             self.lattice_inc_indices: list[int] = []
 
-        self.rho = nn.Parameter(torch.tensor(0.5, dtype=torch.float32), requires_grad=True)
+        # self.rho = nn.Parameter(torch.tensor(RHO, dtype=torch.float32), requires_grad=True)
+        self.rho = RHO
 
         # lattice is not compatible with negated consequent
         assert not (sum(self.negate_consequents) and self.use_lattice)
@@ -650,6 +662,9 @@ class Imply(LogicConnect):
         atcd = torch.unsqueeze(self.mid_output[self.antecedent], 1)
         if self.negate_atcd:
             atcd = self.step_module.NOT(atcd)
+        if self.use_lattice:
+            # atcd = inverse_sigmoid(atcd)
+            atcd = atcd * LATTICE_MULTIPLIER
         return torch.cat((atcd, focused_embed), dim=1)
 
     @property
@@ -676,11 +691,13 @@ class Imply(LogicConnect):
         self.add_module("mlp_output", nn.Linear(self.output_dims[-1], self.n_consequents))
 
     def init_lattice(self):
-        sizes = torch.tensor(self.lattice_sizes, dtype=torch.int)
+        sizes = torch.tensor(self.lattice_sizes, dtype=torch.long)
+        if torch.cuda.is_available():
+            sizes = sizes.to(torch.device('cuda:0'))
 
-        # all consequents will share the embed layer and have their own output layer
+        # For Imply without lattice, all consequents will share the embed layer and have their own output layer
         for i in range(self.n_consequents):
-            self.add_module(f"l{i}", HL(self.input_dim, sizes, self.lattice_inc_indices, self.output_dims[-1]))
+            self.add_module(f"l{i}", HL(self.input_dim, sizes, self.lattice_inc_indices))
 
     def apply_soft_rule(self, x):
         focused_embed, decision_embed = x
@@ -692,7 +709,7 @@ class Imply(LogicConnect):
             mlp_out = getattr(self, 'mlp_output')(decision_embed)
 
         for i, consequent in enumerate(self.consequents):
-            pre_activated_modification = torch.abs(self.rho) * x[:, 0] if self.use_mpav else 0
+            pre_activated_modification = self.rho * x[:, 0] if self.use_mpav else 0
             if self.negate_consequents[i]:
                 pre_activated_modification = -pre_activated_modification
 
@@ -700,7 +717,7 @@ class Imply(LogicConnect):
                 self.mid_output[consequent] = torch.sigmoid(mlp_out[:, i] + pre_activated_modification)
             elif self.use_lattice:
                 self.mid_output[consequent] = torch.sigmoid(
-                    torch.squeeze(getattr(self, f"l{i}")(x, decision_embed), dim=1) + pre_activated_modification)
+                    torch.squeeze(getattr(self, f"l{i}")(x), dim=1) + pre_activated_modification)
 
     def apply_hard_rule(self, x):
         for consequent in self.consequents:

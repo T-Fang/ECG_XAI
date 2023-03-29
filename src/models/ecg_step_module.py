@@ -88,6 +88,11 @@ class EcgStep(StepModule):
     def focused_leads_indices(self) -> list[int]:
         return [LEAD_TO_INDEX[lead_name] for lead_name in self.focused_leads]
 
+    @property
+    def use_lattice(self):
+        return 'Imply' in self.hparams and 'lattice_sizes' in self.hparams['Imply'] and self.hparams['Imply'][
+            'lattice_sizes']
+
     def apply_rule(self, x) -> None:
         """
         Apply the rule of the current step to the input batch and save the mid output to the mid_output dict
@@ -132,15 +137,15 @@ class EcgStep(StepModule):
         """
         Save extra to-be-logged terms to the mid_output dict
         """
-        # save delta, w, and rho
+        # save delta, w
         for comp_op_name in self.comp_op_names:
             comp_op = getattr(self, comp_op_name)
             self.mid_output[f'{comp_op_name}_delta'] = comp_op.delta
             self.mid_output[f'{comp_op_name}_w'] = comp_op.w
 
-        for imply_name in self.imply_names:
-            imply_module = getattr(self, imply_name)
-            self.mid_output[f'{imply_name}_rho'] = imply_module.rho
+        # for imply_name in self.imply_names:
+        #     imply_module = getattr(self, imply_name)
+        #     self.mid_output[f'{imply_name}_rho'] = imply_module.rho
 
     def forward(self, x) -> torch.Tensor:
         self.apply_rule(x)
@@ -186,10 +191,10 @@ class EcgStep(StepModule):
 
     @property
     def extra_terms_to_log(self) -> list[tuple[str, str]]:
-        # log delta, w, and rho
+        # log delta, w
         return [(self.module_name, f'{comp_op_name}_delta') for comp_op_name in self.comp_op_names] + \
-               [(self.module_name, f'{comp_op_name}_w') for comp_op_name in self.comp_op_names] + \
-               [(self.module_name, f'{imply_name}_rho') for imply_name in self.imply_names]
+               [(self.module_name, f'{comp_op_name}_w') for comp_op_name in self.comp_op_names]
+        #    [(self.module_name, f'{imply_name}_rho') for imply_name in self.imply_names]
 
     @property
     def mid_output_to_agg(self) -> list[tuple[str, str]]:
@@ -370,7 +375,8 @@ class RhythmModule(EcgStep):
         self.sarrh_gt = GT(self, 'SARRH_imp', SARRH_THRESH)
 
         # Imply
-        self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
+        if not self.use_lattice:
+            self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
 
         self.ARR_imply = Imply(self, self.get_imply_hparams(hparams, 'SINUS', ['AFIB_imp', 'AFLT_imp'], True))
         self.SBRAD_imply = Imply(self, self.get_imply_hparams(hparams, 'SBRAD_imply_atcd', ['SBRAD_imp']))
@@ -393,7 +399,7 @@ class RhythmModule(EcgStep):
 
         # Imply
         focused_embed = self.get_focused_embed()
-        decision_embed = self.imply_decision_embed_layer(focused_embed)
+        decision_embed = None if self.use_lattice else self.imply_decision_embed_layer(focused_embed)
         imply_input = (focused_embed, decision_embed)
 
         # ~SINUS -> AFIB_imp ∧ AFLT_imp
@@ -440,7 +446,8 @@ class BlockModule(EcgStep):
         self.lqrs_gt = GT(self, 'LQRS_imp', LQRS_THRESH)
 
         # Imply
-        self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
+        if not self.use_lattice:
+            self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
         self.AVB_imply = Imply(self, self.get_imply_hparams(hparams, 'LPR_imp', ['AVB_imp']))
         self.BBB_imply_Block = Imply(self,
                                      self.get_imply_hparams(hparams, 'LQRS_imp', ['LBBB_imp_Block', 'RBBB_imp_Block']))
@@ -458,7 +465,7 @@ class BlockModule(EcgStep):
 
         # Imply
         focused_embed = self.get_focused_embed()
-        decision_embed = self.imply_decision_embed_layer(focused_embed)
+        decision_embed = None if self.use_lattice else self.imply_decision_embed_layer(focused_embed)
         imply_input = (focused_embed, decision_embed)
 
         # LPR_imp -> AVB_imp
@@ -486,7 +493,8 @@ class WPWModule(EcgStep):
         self.spr_lt = LT(self, 'SPR_imp', SPR_THRESH)
 
         # Imply
-        self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
+        if not self.use_lattice:
+            self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
         self.WPW_imply = Imply(self, self.get_imply_hparams(hparams, 'WPW_imply_atcd', ['WPW_imp']))
         self.IVCD_imply = Imply(self, self.get_imply_hparams(hparams, 'IVCD_imply_atcd', ['IVCD_imp']))
 
@@ -503,7 +511,7 @@ class WPWModule(EcgStep):
 
         # Imply
         focused_embed = self.get_focused_embed()
-        decision_embed = self.imply_decision_embed_layer(focused_embed)
+        decision_embed = None if self.use_lattice else self.imply_decision_embed_layer(focused_embed)
         imply_input = (focused_embed, decision_embed)
 
         # ~LBBB_imp_Block ∧ ~RBBB_imp_Block ∧ SPR_imp -> WPW_imp
@@ -551,7 +559,8 @@ class STModule(EcgStep):
             self.add_module(f'std_{lead}_lt', LT(self, f'STD_{lead}_imp', STD_THRESH))
 
         # Imply
-        self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
+        if not self.use_lattice:
+            self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
         self.IMI_imply_STE = Imply(self, self.get_imply_hparams(hparams, 'IMI_imply_STE_atcd', ['IMI_imp_STE']))
         self.AMI_imply_STE = Imply(self, self.get_imply_hparams(hparams, 'AMI_imply_STE_atcd', ['AMI_imp_STE']))
         self.LMI_imply_STE = Imply(self, self.get_imply_hparams(hparams, 'LMI_imply_STE_atcd', ['LMI_imp_STE']))
@@ -580,7 +589,7 @@ class STModule(EcgStep):
 
         # Imply
         focused_embed = self.get_focused_embed()
-        decision_embed = self.imply_decision_embed_layer(focused_embed)
+        decision_embed = None if self.use_lattice else self.imply_decision_embed_layer(focused_embed)
         imply_input = (focused_embed, decision_embed)
 
         # GOR([STE_II_imp, STE_III_imp, STE_aVF_imp], 2) -> IMI_imp_STE
@@ -646,7 +655,8 @@ class QRModule(EcgStep):
             self.add_module(f'deep_q_{lead}_lt', LT(self, f'DEEP_Q_{lead}_imp', Q_AMP_THRESH[lead]))
 
         # Imply
-        self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
+        if not self.use_lattice:
+            self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
 
         # * Ancillary criteria
         self.PRWP_imply = Imply(
@@ -678,7 +688,7 @@ class QRModule(EcgStep):
 
         # Imply
         focused_embed = self.get_focused_embed()
-        decision_embed = self.imply_decision_embed_layer(focused_embed)
+        decision_embed = None if self.use_lattice else self.imply_decision_embed_layer(focused_embed)
         imply_input = (focused_embed, decision_embed)
 
         # PRWP -> AMI_imp_PRWP ∧ LVH_imp_PRWP ∧ LBBB_imp_PRWP
@@ -728,7 +738,8 @@ class PModule(EcgStep):
         self.peak_p_V1_gt = GT(self, 'PEAK_P_V1_imp', PEAK_P_THRESH_V1)
 
         # Imply
-        self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
+        if not self.use_lattice:
+            self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
         self.LAE_imply = Imply(self, self.get_imply_hparams(hparams, 'LP_II_imp', ['LAE_imp']))
         self.RAE_imply = Imply(self, self.get_imply_hparams(hparams, 'RAE_imply_atcd', ['RAE_imp']))
 
@@ -751,7 +762,7 @@ class PModule(EcgStep):
 
         # Imply
         focused_embed = self.get_focused_embed()
-        decision_embed = self.imply_decision_embed_layer(focused_embed)
+        decision_embed = None if self.use_lattice else self.imply_decision_embed_layer(focused_embed)
         imply_input = (focused_embed, decision_embed)
 
         # LP_II_imp -> LAE_imp
@@ -808,7 +819,8 @@ class VHModule(EcgStep):
         self.dom_s_v6_lt = LT(self, 'DOM_S_V6_imp', DOM_S_THRESH)
 
         # Imply
-        self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
+        if not self.use_lattice:
+            self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
         self.LVH_imply_VH = Imply(self, self.get_imply_hparams(hparams, 'LVH_imply_VH_atcd', ['LVH_imp_VH']))
         self.RVH_imply_VH = Imply(self, self.get_imply_hparams(hparams, 'RVH_imply_VH_atcd', ['RVH_imp_VH']))
 
@@ -845,7 +857,7 @@ class VHModule(EcgStep):
 
         # Imply
         focused_embed = self.get_focused_embed()
-        decision_embed = self.imply_decision_embed_layer(focused_embed)
+        decision_embed = None if self.use_lattice else self.imply_decision_embed_layer(focused_embed)
         imply_input = (focused_embed, decision_embed)
 
         # (AGE_OLD_imp ∧ LVH_L1_OLD_imp) ∨ (~AGE_OLD_imp ∧ LVH_L1_YOUNG_imp) ∨ (MALE ∧ LVH_L2_MALE_imp) ∨ (~MALE ∧ LVH_L2_FEMALE_imp) -> LVH_imp_VH
@@ -889,7 +901,8 @@ class TModule(EcgStep):
             self.add_module(f'invt_{lead}_lt', LT(self, f'INVT_{lead}_imp', INVT_THRESH))
 
         # Imply
-        self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
+        if not self.use_lattice:
+            self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
         self.MI_imply_T = Imply(
             self, self.get_imply_hparams(hparams, 'MI_imply_T_atcd', ['IMI_imp_T', 'AMI_imp_T', 'LMI_imp_T']))
 
@@ -910,7 +923,7 @@ class TModule(EcgStep):
 
         # Imply
         focused_embed = self.get_focused_embed()
-        decision_embed = self.imply_decision_embed_layer(focused_embed)
+        decision_embed = None if self.use_lattice else self.imply_decision_embed_layer(focused_embed)
         imply_input = (focused_embed, decision_embed)
 
         # GOR([INVT_imp_x ∧ (STE_x_imp ∨ STD_x_imp), for x ∈ {I, II, V3-V6}], 2) -> IMI_imp_T ∧ AMI_imp_T ∧ LMI_imp_T
@@ -989,7 +1002,8 @@ class AxisModule(EcgStep):
         self.pos_qrs_aVF_gt = GT(self, 'POS_QRS_aVF_imp', POS_QRS_THRESH)
 
         # Imply
-        self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
+        if not self.use_lattice:
+            self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
 
         self.LAFB_imply = Imply(self, self.get_imply_hparams(hparams, 'LAD_imp', ['LAFB_imp']))
         self.LPFB_imply = Imply(self, self.get_imply_hparams(hparams, 'RAD_imp', ['LPFB_imp']))
@@ -1018,7 +1032,7 @@ class AxisModule(EcgStep):
 
         # Imply
         focused_embed = self.get_focused_embed()
-        decision_embed = self.imply_decision_embed_layer(focused_embed)
+        decision_embed = None if self.use_lattice else self.imply_decision_embed_layer(focused_embed)
         imply_input = (focused_embed, decision_embed)
 
         # LAD_imp -> LAFB_imp

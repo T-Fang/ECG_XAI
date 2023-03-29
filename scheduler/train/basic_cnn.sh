@@ -3,7 +3,7 @@
 ngpus='1'
 ncpus='4'
 mem='70G'
-walltime='25:00:00'
+walltime='12:00:00'
 name='basic_cnn'
 script_location='/home/ftian/storage/ECG_XAI/src/scripts/train/basic_cnn.py'
 activate='/home/ftian/miniconda3/bin/activate'

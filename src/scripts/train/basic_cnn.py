@@ -7,15 +7,15 @@ import init_train  # noqa: F401
 from src.models.ecg_step_module import BasicCnn, BasicCnnPipeline
 from src.basic.constants import TRAIN_LOG_PATH
 from src.utils.data_utils import EcgDataModule
-from src.utils.train_utils import flatten_dict, get_basic_cnn_hparams, get_common_trainer_params, get_optim_hparams, get_trainer_callbacks, tune, visualize_study  # noqa: E501
+from src.utils.train_utils import set_cuda_env, flatten_dict, get_basic_cnn_hparams, get_common_trainer_params, get_optim_hparams, get_trainer_callbacks, tune, visualize_study  # noqa: E501
 
 # not-tuned Parameters
 SEED = 5
 
 N_WORKERS = 4
 USE_QMC = False
-N_TRIALS = 16
-TIMEOUT = 86400
+N_TRIALS = 80
+TIMEOUT = 39600
 MAX_EPOCHS = 20
 SAVE_TOP_K = 3
 USE_MPAV = False
@@ -57,6 +57,9 @@ def objective(trial: optuna.Trial, datamodule: EcgDataModule, save_dir: str):
         raise torch.cuda.OutOfMemoryError("Batch size <= 16, it's likely that OOM Error has occur")
     if len(datamodule.train_ds) % datamodule.hparams.batch_size == 1:
         datamodule.hparams.batch_size -= 1
+
+    # datamodule.hparams.batch_size = 2048
+
     print('Using batch size: ', datamodule.hparams.batch_size)
 
     trainer.fit(model, datamodule)
@@ -65,6 +68,7 @@ def objective(trial: optuna.Trial, datamodule: EcgDataModule, save_dir: str):
 
 
 if __name__ == '__main__':
+    set_cuda_env(gpu_ids='0')
     study = tune(objective,
                  n_trials=N_TRIALS,
                  timeout=TIMEOUT,

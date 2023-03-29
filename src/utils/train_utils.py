@@ -53,14 +53,7 @@ def flatten_dict(d, sep='_'):
     return pd.json_normalize(d, sep=sep).to_dict(orient='records')[0]
 
 
-def tune(objective,
-         n_trials=100,
-         timeout=36000,
-         save_dir=TRAIN_LOG_PATH,
-         use_qmc_sampler=False,
-         num_workers=0,
-         seed: int = MANUAL_SEED):
-    ecg_datamodule = EcgDataModule(batch_size=4, num_workers=num_workers)
+def get_study(save_dir: str, seed: int, use_qmc_sampler: bool):
     study_file_path = os.path.join(save_dir, "study.pkl")
     if os.path.isfile(study_file_path):
         study = pickle.load(open(study_file_path, "rb"))
@@ -69,26 +62,36 @@ def tune(objective,
         # For QMC sampler, better to set n_trials to power of 2
         sampler = QMCSampler(scramble=True, seed=seed) if use_qmc_sampler else TPESampler(seed=seed)
         study = optuna.create_study(direction="maximize", sampler=sampler)
+    return study
 
+
+def tune(objective,
+         n_trials=100,
+         timeout=36000,
+         save_dir=TRAIN_LOG_PATH,
+         use_qmc_sampler=False,
+         num_workers=0,
+         seed: int = MANUAL_SEED):
+    ecg_datamodule = EcgDataModule(batch_size=128, num_workers=num_workers)
+    study = get_study(save_dir, seed, use_qmc_sampler)
     study.optimize(lambda trial: objective(trial, ecg_datamodule, save_dir),
                    n_trials=n_trials,
                    timeout=timeout,
                    catch=[torch.cuda.OutOfMemoryError])
 
     print_best_trial(study)
+    study_file_path = os.path.join(save_dir, "study.pkl")
     pickle.dump(study, open(study_file_path, "wb"))
     return study
 
 
 def visualize_study(study, save_dir: str, use_lattice: bool, use_rule: bool = True):
-    hparams_to_check = [
-        'Embed_n_conv_layers', 'Embed_n_fc_layers', 'Embed_conv_kernel_size', 'Embed_conv_stride',
-        'Embed_pool_kernel_size', 'Embed_pool_stride'
-    ]
+    hparams_to_check = ['Embed_n_conv_layers', 'Embed_conv_kernel_size', 'Embed_pool_kernel_size', 'Embed_pool_stride']
+    hparams_to_check.append('Embed_fc_out_dim_l0')
     if use_rule:
         all_imply_module_name = ['Rhythm', 'Block', 'WPW', 'ST', 'QR', 'P', 'VH', 'T', 'Axis']
         for module_name in all_imply_module_name:
-            hparams_to_check.append(f'{module_name}_Imply_n_fc_layers')
+            hparams_to_check.append(f'{module_name}_Imply_fc_out_dim_l0')
             if use_lattice:
                 hparams_to_check.append(f'{module_name}_Imply_lattice_size')
 
@@ -162,8 +165,9 @@ def get_hparams(trial: optuna.Trial, use_mpav, use_lattice) -> dict:
         TModule.__name__: get_t_hparams(trial, use_mpav, use_lattice),
         AxisModule.__name__: get_axis_hparams(trial, use_mpav, use_lattice)
     }
-
-    return {**get_pipeline_hparams(trial), 'optim': get_optim_hparams(trial), **ecg_step_hparams}
+    hparams = {**get_pipeline_hparams(trial), 'optim': get_optim_hparams(trial), **ecg_step_hparams}
+    print('Using hparams:', hparams)
+    return hparams
 
 
 def get_dummy_hparams() -> dict:
@@ -231,19 +235,20 @@ def get_pipeline_hparams(trial: optuna.Trial) -> dict:
 
 
 def get_basic_cnn_hparams(trial: optuna.Trial) -> dict:
-    embed_n_conv_layers = trial.suggest_int('Embed_n_conv_layers', 1, 3)
+    embed_n_conv_layers = trial.suggest_int('Embed_n_conv_layers', 1, 2)
     embed_conv_out_channels = [
-        trial.suggest_int(f"Embed_conv_out_ch_l{i}", 4, 256, log=True) for i in range(embed_n_conv_layers)
+        trial.suggest_int(f"Embed_conv_out_ch_l{i}", 4, 128, log=True) for i in range(embed_n_conv_layers)
     ]
 
-    embed_conv_kernel_size = trial.suggest_int('Embed_conv_kernel_size', 1, 12)
-    embed_conv_stride = trial.suggest_int('Embed_conv_stride', 1, 2)
-    embed_pool_kernel_size = trial.suggest_int('Embed_pool_kernel_size', 1, 2)
-    embed_pool_stride = trial.suggest_int('Embed_pool_stride', 1, embed_pool_kernel_size)
+    embed_conv_kernel_size = trial.suggest_int('Embed_conv_kernel_size', 8, 24)
+    # embed_conv_stride = trial.suggest_int('Embed_conv_stride', 1, 2)
+    embed_conv_stride = 1
+    embed_pool_kernel_size = trial.suggest_int('Embed_pool_kernel_size', 2, 4)
+    embed_pool_stride = trial.suggest_int('Embed_pool_stride', 2, embed_pool_kernel_size)
 
-    embed_n_fc_layers = trial.suggest_int('Embed_n_fc_layers', 1, 3)
+    embed_n_fc_layers = 1
     embed_fc_out_dims = [
-        trial.suggest_int(f"Embed_fc_out_dim_l{i}", 4, 256, log=True) for i in range(embed_n_fc_layers)
+        trial.suggest_int(f"Embed_fc_out_dim_l{i}", 4, 128, log=True) for i in range(embed_n_fc_layers)
     ]
 
     return {
@@ -268,18 +273,20 @@ def get_dummy_ecg_embed_hparams() -> dict:
 
 
 def get_ecg_embed_hparams(trial: optuna.Trial) -> dict:
-    embed_n_conv_layers = trial.suggest_int('Embed_n_conv_layers', 1, 3)
+    embed_n_conv_layers = trial.suggest_int('Embed_n_conv_layers', 1, 2)
     embed_conv_out_channels = [
-        trial.suggest_int(f"Embed_conv_out_ch_l{i}", 4, 256, log=True) for i in range(embed_n_conv_layers)
+        trial.suggest_int(f"Embed_conv_out_ch_l{i}", 4, 128, log=True) for i in range(embed_n_conv_layers)
     ]
-    embed_conv_kernel_size = trial.suggest_int('Embed_conv_kernel_size', 1, 12)
-    embed_conv_stride = trial.suggest_int('Embed_conv_stride', 1, 2)
-    embed_pool_kernel_size = trial.suggest_int('Embed_pool_kernel_size', 1, 2)
-    embed_pool_stride = trial.suggest_int('Embed_pool_stride', 1, embed_pool_kernel_size)
+    embed_conv_kernel_size = trial.suggest_int('Embed_conv_kernel_size', 8, 24)
+    # embed_conv_stride = trial.suggest_int('Embed_conv_stride', 1, 2)
+    embed_conv_stride = 1
+    embed_pool_kernel_size = trial.suggest_int('Embed_pool_kernel_size', 2, 4)
+    embed_pool_stride = trial.suggest_int('Embed_pool_stride', 2, embed_pool_kernel_size)
 
-    embed_n_fc_layers = trial.suggest_int('Embed_n_fc_layers', 1, 3)
+    # embed_n_fc_layers = trial.suggest_int('Embed_n_fc_layers', 1, 3)
+    embed_n_fc_layers = 1
     embed_fc_out_dims = [
-        trial.suggest_int(f"Embed_fc_out_dim_l{i}", 4, 256, log=True) for i in range(embed_n_fc_layers - 1)
+        trial.suggest_int(f"Embed_fc_out_dim_l{i}", 4, 128, log=True) for i in range(embed_n_fc_layers - 1)
     ] + [trial.suggest_int(f"Embed_fc_out_dim_l{embed_n_fc_layers - 1}", 4, 64, log=True)]
 
     return {
@@ -297,11 +304,12 @@ def get_dummy_imply_hparams(use_mpav: bool, use_lattice: bool) -> dict:
 
 
 def get_imply_hparams(trial: optuna.Trial, use_mpav: bool, use_lattice: bool, prefix: str) -> dict:
-    imply_n_fc_layers = trial.suggest_int(f"{prefix}_Imply_n_fc_layers", 1, 3)
+    # imply_n_fc_layers = trial.suggest_int(f"{prefix}_Imply_n_fc_layers", 1, 3)
+    imply_n_fc_layers = 1
     imply_fc_out_dims = [
         trial.suggest_int(f"{prefix}_Imply_fc_out_dim_l{i}", 4, 256, log=True) for i in range(imply_n_fc_layers)
     ]
-    lattice_sizes = [trial.suggest_int(f"{prefix}_Imply_lattice_size", 2, 6)] if use_lattice else []
+    lattice_sizes = [trial.suggest_int(f"{prefix}_Imply_lattice_size", 3, 6)] if use_lattice else []
 
     return {'output_dims': imply_fc_out_dims, 'use_mpav': use_mpav, 'lattice_sizes': lattice_sizes}
 

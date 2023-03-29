@@ -3,7 +3,7 @@
 ngpus='1'
 ncpus='4'
 mem='70G'
-walltime='25:00:00'
+walltime='12:00:00'
 name='lattice'
 script_location='/home/ftian/storage/ECG_XAI/src/scripts/train/soft_rule_lattice.py'
 activate='/home/ftian/miniconda3/bin/activate'

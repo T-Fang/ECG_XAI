@@ -7,14 +7,14 @@ import init_train  # noqa: F401
 from src.models.ecg_step_module import EcgPipeline
 from src.basic.constants import TRAIN_LOG_PATH
 from src.utils.data_utils import EcgDataModule
-from src.utils.train_utils import flatten_dict, get_hparams, get_common_trainer_params, get_trainer_callbacks, tune, visualize_study
+from src.utils.train_utils import flatten_dict, get_hparams, get_common_trainer_params, get_trainer_callbacks, set_cuda_env, tune, visualize_study
 
 # not-tuned Parameters
-SEED = 5
+SEED = 6
 
 N_WORKERS = 4
 USE_QMC = False
-N_TRIALS = 4
+N_TRIALS = 2
 TIMEOUT = 86400
 MAX_EPOCHS = 20
 SAVE_TOP_K = 3
@@ -52,6 +52,7 @@ def objective(trial: optuna.Trial, datamodule: EcgDataModule, save_dir: str):
 
 
 if __name__ == '__main__':
+    set_cuda_env(gpu_ids='2')
     study = tune(objective,
                  n_trials=N_TRIALS,
                  timeout=TIMEOUT,

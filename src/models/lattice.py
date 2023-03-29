@@ -1,9 +1,123 @@
+import itertools
 import torch
 from torch import nn
 import numpy as np
 
+from pmlayer.torch import mlp
 from pmlayer.common import util
-from pmlayer.torch.hierarchical_lattice_layer import MultiLinearInterpolation, LUMap
+from pmlayer.torch.hierarchical_lattice_layer import LUMap
+
+
+class MultiLinearInterpolation:
+    '''
+    Multilinear interpolation
+
+    self.coef : Tensor (dtype=torch.long)
+        self.coef.shape = [ # monotone columns ]
+    self.mesh_size : Tensor (dtype=torch.long)
+        self.coef.mesh_size = [ # monotone columns ]
+    '''
+
+    def __init__(self, mesh_size):
+        '''
+        Compute self.coef based on mesh_size
+
+        Parameters
+        ----------
+        mesh_size : Tensor
+            mesh_size specifies the size of each dimension
+        '''
+
+        self.mesh_size = mesh_size
+        coef = []
+        for i in range(len(mesh_size)):
+            coef.append(torch.prod(self.mesh_size[i + 1:]))
+        self.coef = torch.tensor(coef, dtype=torch.long)
+        self.coef = self.coef.to(mesh_size.device)
+
+    def _clamp(self, coordinates_int):
+        # set minimum of coordinates_int to 0
+        coordinates_int[coordinates_int < 0] = 0
+        # set maximum of coordinates_int less than self.mesh_size-1
+        for i, s in enumerate(self.mesh_size):
+            ub = s - 1
+            temp = coordinates_int[:, i]
+            temp[temp >= ub] = ub - 1
+        return coordinates_int
+
+    def get_index(self, coordinates):
+        '''
+        Parameters
+        ----------
+        coordinates : Tensor
+            coordinates.shape = [batchsize, len(self.mesh_size)]
+            Each number in coordinates must be in range [0,1]
+
+        Returns
+        -------
+        coordinates_int : Tensor
+            coordinates_int.shape = coordinates.shape
+            Integer coordinates scaled by self.mesh_size
+
+        coordinates_frac : Tensor
+            coordinates_frac.shape = coordinates.shape
+            Fractional coordinates scaled by self.mesh_size
+        '''
+
+        coordinates = coordinates * (self.mesh_size - 1)
+        coordinates_int = coordinates.to(torch.long)
+        coordinates_int = self._clamp(coordinates_int)
+        coordinates_frac = coordinates - coordinates_int
+        return coordinates_int, coordinates_frac
+
+    def interpolate(self, coordinates, mesh_pred):
+        '''
+        Interpolate mesh_pred values at coordinates
+
+        Parameters
+        ----------
+        coordinates : Tensor
+            coordinates.shape = [ batch_size, # monotone columns ]
+
+        mesh_pred : Tensor
+            mesh_pred.shape = [ batch_size, volume of lattice ]
+
+        Returns
+        -------
+        ret : long
+        '''
+
+        coordinates_int, coordinates_frac = self.get_index(coordinates)
+        l = [0, 1]  # noqa: E741
+        pred = torch.zeros(coordinates.shape[0]).to(coordinates.device)
+        for d in itertools.product(l, repeat=coordinates.shape[1]):
+            d = torch.tensor(d, dtype=torch.long).to(coordinates.device)
+            index = self.coordinate2index(coordinates_int + d).view(-1, 1)
+            value = torch.gather(mesh_pred, 1, index).view(-1)
+            temp = (1 - d) - coordinates_frac * (1 - d * 2)
+            pred += value * temp.prod(axis=1)
+        return pred
+
+    def coordinate2index(self, coordinate):
+        '''
+        Convert coordinate into index
+
+        Parameters
+        ----------
+        coordinate : Tensor (dtype=torch.long)
+            coordinate.shape = [ batch_size, # monotone column ]
+
+        Returns
+        -------
+        ret : Tensor (dtype=torch.long)
+            ret.shape = [ batch_size ]
+        '''
+
+        if coordinate.shape[0] == 0:
+            return None
+        # device = coordinate.device
+        # return torch.matmul(coordinate.cpu(), self.coef.cpu()).to(device)
+        return torch.matmul(coordinate, self.coef)
 
 
 class HL(nn.Module):
@@ -13,7 +127,7 @@ class HL(nn.Module):
     @note Current implementation does not support decreasing function
     '''
 
-    def __init__(self, num_input_dims, lattice_sizes, indices_increasing, decision_embed_dim):
+    def __init__(self, num_input_dims, lattice_sizes, indices_increasing):
         super().__init__()
         '''
         Parameters
@@ -41,7 +155,7 @@ class HL(nn.Module):
 
         # initialize neural network
         if input_len > 0:
-            self.output_layer = nn.Linear(decision_embed_dim, 1)
+            self.nn = mlp.MLP(input_len, output_len)
         else:
             var = torch.sqrt(torch.full((output_len,), 2.0 / output_len))
             initial_b = torch.normal(0.0, var)
@@ -152,7 +266,7 @@ class HL(nn.Module):
             coordinate.pop()
         return ret
 
-    def forward(self, x, decision_embed):
+    def forward(self, x):
         '''
         Parameters
         ----------
@@ -168,7 +282,7 @@ class HL(nn.Module):
         # predict values associated with lattice vertices
         xn = x[:, self.cols_non_monotone]
         if xn.shape[1] > 0:
-            xn = self.output_layer(decision_embed)
+            xn = self.nn(xn)
         else:
             b = torch.sigmoid(self.b)
             xn = torch.tile(b, (xn.shape[0], 1))
@@ -190,9 +304,11 @@ class HL(nn.Module):
                 ub = torch.index_select(out, 1, item.upper_index)
                 ub, _ = torch.min(ub, 1)
                 ub = ub.view(-1)
-            out[:, item.index] = torch.lerp(lb, ub, xn[:, item.index])
+            with torch.cuda.amp.autocast(enabled=False):
+                out[:, item.index] = torch.lerp(lb, ub, xn[:, item.index].float())
 
         # interpolate by using the output of the neural network
         monotone_inputs = x[:, self.cols_monotone]
+        print(monotone_inputs[:8])
         ret = self.mli.interpolate(monotone_inputs, out)
         return ret.view(-1, 1)
