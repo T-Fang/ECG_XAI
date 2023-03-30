@@ -172,7 +172,7 @@ def get_hparams(trial: optuna.Trial, use_mpav, use_lattice) -> dict:
 
 
 def get_dummy_hparams() -> dict:
-    USE_MPAV = True
+    USE_MPAV = False
     USE_LATTICE = False
     optim_hparams = {'lr': 1e-3, 'beta1': 0.9, 'eps': 1e-8, 'beta2': 0.999, 'exp_lr_gamma': 0.98}
     pipeline_hparams = {

@@ -754,7 +754,8 @@ class ComparisonOp(Predicate):
         return torch.sigmoid(self.sign * torch.abs(self.w) * (term - self.threshold * (1 + self.delta)))
 
     def apply_hard_rule(self, term):
-        return float(term > self.threshold) if self.is_gt else float(term < self.threshold)
+        thresh_tensor = torch.tensor(self.threshold, device=term.device)
+        return torch.gt(term, thresh_tensor).float() if self.is_gt else torch.lt(term, thresh_tensor).float()
 
     @property
     def delta_loss(self) -> torch.Tensor:
