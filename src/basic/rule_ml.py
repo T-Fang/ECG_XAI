@@ -356,7 +356,8 @@ class PipelineModule(pl.LightningModule):
         feat_loss, delta_loss = loss['feat'], loss['delta']
 
         with torch.cuda.amp.autocast(enabled=False):
-            print(self.__class__.__name__, 'y_hat', y_hat, 'y', y)
+            if self.is_using_hard_rule:
+                y_hat = torch.clamp(y_hat, 0, 1)
             dx_loss = self.loss_fn(y_hat.float(), y.float())
         y = y.int()
         return (y_hat, y), (dx_loss, feat_loss, delta_loss)
