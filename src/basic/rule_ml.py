@@ -356,6 +356,7 @@ class PipelineModule(pl.LightningModule):
         feat_loss, delta_loss = loss['feat'], loss['delta']
 
         with torch.cuda.amp.autocast(enabled=False):
+            print(self.__class__.__name__, 'y_hat', y_hat, 'y', y)
             dx_loss = self.loss_fn(y_hat.float(), y.float())
         y = y.int()
         return (y_hat, y), (dx_loss, feat_loss, delta_loss)
@@ -422,7 +423,8 @@ class PipelineModule(pl.LightningModule):
 
     def on_fit_start(self):
         # self.tb_logger.add_graph(model=self, input_to_model=self.example_input)
-        self.tb_logger.add_text('batch_size', str(self.trainer.datamodule.hparams.batch_size), 0)
+        if self.trainer.datamodule:
+            self.tb_logger.add_text('batch_size', str(self.trainer.datamodule.hparams.batch_size), 0)
         self.tb_logger.add_text("Imply's rho: ", str(RHO), 0)
 
     def training_step(self, batch, batch_idx):

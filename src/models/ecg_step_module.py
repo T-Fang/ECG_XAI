@@ -313,6 +313,8 @@ class EcgEmbed(EcgStep):
 
         self.mid_output['embed_dim_per_lead'] = self.fc_out_dims[-1]
 
+        # print('init embed_dim_per_lead', self.mid_output['embed_dim_per_lead'])
+
         conv_layers: list[nn.Module] = []
         fc_layers: list[nn.Module] = []
         cur_seq_len = SIGNAL_LEN  # current sequence length
@@ -346,7 +348,7 @@ class EcgEmbed(EcgStep):
     def apply_rule(self, x) -> None:
         batched_ecg, batched_obj_feat = x
         batch_size = batched_ecg.shape[0]
-
+        # print('in apply_rule: init embed_dim_per_lead', self.mid_output['embed_dim_per_lead'])
         if self.is_using_hard_rule:
             self.mid_output['embed'] = torch.zeros([batch_size, N_LEADS, self.mid_output['embed_dim_per_lead']],
                                                    device=batched_ecg.device)

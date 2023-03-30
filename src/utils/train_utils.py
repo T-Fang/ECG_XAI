@@ -265,7 +265,7 @@ def get_basic_cnn_hparams(trial: optuna.Trial) -> dict:
 def get_dummy_ecg_embed_hparams() -> dict:
     return {
         'conv_out_channels': [2],
-        'fc_out_dims': [32, 16],
+        'fc_out_dims': [1],
         'conv_kernel_size': 1000,
         'conv_stride': 500,
         'pool_kernel_size': 2,

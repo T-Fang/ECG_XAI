@@ -12,7 +12,7 @@ from src.utils.train_utils import flatten_dict, get_dummy_hparams, get_common_tr
 # not-tuned Parameters
 SEED = 66
 
-N_WORKERS = 4
+N_WORKERS = 0
 USE_QMC = False
 N_TRIALS = 1
 TIMEOUT = 39600
@@ -20,7 +20,7 @@ MAX_EPOCHS = 20
 SAVE_TOP_K = 3
 USE_MPAV = False
 USE_LATTICE = False
-BATCH_SIZE = 256
+BATCH_SIZE = 32
 SAVE_DIR = os.path.join(TRAIN_LOG_PATH, "hard_rule/")
 
 
