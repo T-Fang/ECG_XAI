@@ -10,11 +10,11 @@ from src.utils.data_utils import EcgDataModule
 from src.utils.train_utils import flatten_dict, get_hparams, get_common_trainer_params, get_trainer_callbacks, set_cuda_env, tune, visualize_study
 
 # not-tuned Parameters
-SEED = 666
+SEED = 6666
 
 N_WORKERS = 4
 USE_QMC = False
-N_TRIALS = 1
+N_TRIALS = 8
 TIMEOUT = 39600
 MAX_EPOCHS = 2
 SAVE_TOP_K = 3
@@ -27,13 +27,14 @@ def objective(trial: optuna.Trial, datamodule: EcgDataModule, save_dir: str):
     hparams = get_hparams(trial, USE_MPAV, USE_LATTICE)
     model = EcgPipeline(hparams)
 
-    trainer = Trainer(callbacks=get_trainer_callbacks(trial, SAVE_TOP_K),
-                      logger=TensorBoardLogger(save_dir=save_dir),
-                      max_epochs=MAX_EPOCHS,
-                      auto_scale_batch_size='power',
-                      limit_train_batches=2,
-                      limit_val_batches=2,
-                      **get_common_trainer_params())
+    trainer = Trainer(
+        callbacks=get_trainer_callbacks(trial, SAVE_TOP_K),
+        logger=TensorBoardLogger(save_dir=save_dir),
+        max_epochs=MAX_EPOCHS,
+        auto_scale_batch_size='power',
+        #   limit_train_batches=2,
+        #   limit_val_batches=2,
+        **get_common_trainer_params())
 
     # record hyperparameters
     trainer.logger.log_hyperparams(flatten_dict(hparams))
@@ -51,7 +52,7 @@ def objective(trial: optuna.Trial, datamodule: EcgDataModule, save_dir: str):
 
 
 if __name__ == '__main__':
-    set_cuda_env(gpu_ids='5')
+    set_cuda_env(gpu_ids='7')
     study = tune(objective,
                  n_trials=N_TRIALS,
                  timeout=TIMEOUT,

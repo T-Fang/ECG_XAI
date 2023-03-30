@@ -72,7 +72,7 @@ def tune(objective,
          use_qmc_sampler=False,
          num_workers=0,
          seed: int = MANUAL_SEED):
-    ecg_datamodule = EcgDataModule(batch_size=128, num_workers=num_workers)
+    ecg_datamodule = EcgDataModule(batch_size=256, num_workers=num_workers)
     study = get_study(save_dir, seed, use_qmc_sampler)
     study.optimize(lambda trial: objective(trial, ecg_datamodule, save_dir),
                    n_trials=n_trials,
@@ -96,7 +96,8 @@ def visualize_study(study, save_dir: str, use_lattice: bool, use_rule: bool = Tr
                 hparams_to_check.append(f'{module_name}_Imply_lattice_size')
 
     # these Figure are from plotly.graph_objects
-    slice_plot = plot_slice(study, params=hparams_to_check)
+    # slice_plot = plot_slice(study, params=hparams_to_check)
+    slice_plot = plot_slice(study, params=None)
     slice_plot.write_image(os.path.join(save_dir, "hparams_slice_plot.png"))
     history_plot = plot_optimization_history(study)
     history_plot.write_image(os.path.join(save_dir, "hparams_optimization_history.png"))
@@ -309,7 +310,7 @@ def get_imply_hparams(trial: optuna.Trial, use_mpav: bool, use_lattice: bool, pr
     imply_fc_out_dims = [
         trial.suggest_int(f"{prefix}_Imply_fc_out_dim_l{i}", 4, 256, log=True) for i in range(imply_n_fc_layers)
     ]
-    lattice_sizes = [trial.suggest_int(f"{prefix}_Imply_lattice_size", 3, 6)] if use_lattice else []
+    lattice_sizes = [trial.suggest_int(f"{prefix}_Imply_lattice_size", 2, 6)] if use_lattice else []
 
     return {'output_dims': imply_fc_out_dims, 'use_mpav': use_mpav, 'lattice_sizes': lattice_sizes}
 

@@ -10,17 +10,18 @@ from src.utils.data_utils import EcgDataModule
 from src.utils.train_utils import flatten_dict, get_hparams, get_common_trainer_params, get_trainer_callbacks, set_cuda_env, tune, visualize_study
 
 # not-tuned Parameters
-SEED = 66
+SEED = 66666
 
 N_WORKERS = 4
 USE_QMC = False
-N_TRIALS = 8
+N_TRIALS = 15
 TIMEOUT = 39600
 MAX_EPOCHS = 25
 SAVE_TOP_K = 3
 USE_MPAV = True
 USE_LATTICE = False
-SAVE_DIR = os.path.join(TRAIN_LOG_PATH, "soft_rule_mpav/")
+rho = 8
+SAVE_DIR = os.path.join(TRAIN_LOG_PATH, f"rho_{rho}_soft_rule_mpav/")
 
 
 def objective(trial: optuna.Trial, datamodule: EcgDataModule, save_dir: str):
@@ -32,8 +33,8 @@ def objective(trial: optuna.Trial, datamodule: EcgDataModule, save_dir: str):
         logger=TensorBoardLogger(save_dir=save_dir),
         max_epochs=MAX_EPOCHS,
         auto_scale_batch_size='power',
-        # limit_train_batches=2,
-        # limit_val_batches=2,
+        #   limit_train_batches=2,
+        #   limit_val_batches=2,
         **get_common_trainer_params())
 
     # record hyperparameters

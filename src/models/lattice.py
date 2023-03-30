@@ -115,9 +115,9 @@ class MultiLinearInterpolation:
 
         if coordinate.shape[0] == 0:
             return None
-        # device = coordinate.device
-        # return torch.matmul(coordinate.cpu(), self.coef.cpu()).to(device)
-        return torch.matmul(coordinate, self.coef)
+        device = coordinate.device
+        return torch.matmul(coordinate.cpu(), self.coef.cpu()).to(device)
+        # return torch.matmul(coordinate, self.coef)
 
 
 class HL(nn.Module):
@@ -144,6 +144,7 @@ class HL(nn.Module):
         '''
 
         # create map table
+        num_input_dims = 1
         input_len = num_input_dims - len(indices_increasing)
         output_len = 1
         cols_monotone = [False] * num_input_dims
@@ -309,6 +310,6 @@ class HL(nn.Module):
 
         # interpolate by using the output of the neural network
         monotone_inputs = x[:, self.cols_monotone]
-        print(monotone_inputs[:8])
+        # print(monotone_inputs[:8])
         ret = self.mli.interpolate(monotone_inputs, out)
         return ret.view(-1, 1)

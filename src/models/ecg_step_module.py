@@ -1,3 +1,4 @@
+from collections import defaultdict
 import torch
 import torch.nn as nn
 from src.basic.constants import AGE_OLD_THRESH, AXIS_LEADS, BLOCK_LEADS, BRAD_THRESH, DEEP_S_THRESH, DOM_R_THRESH, DOM_S_THRESH, INVT_THRESH, LP_THRESH_II, LQRS_WPW_THRESH, LVH_L1_OLD_THRESH, LVH_L1_YOUNG_THRESH, LVH_L2_FEMALE_THRESH, LVH_L2_MALE_THRESH, N_LEADS, LEAD_TO_INDEX, ALL_LEADS, P_LEADS, PEAK_P_THRESH_II, PEAK_P_THRESH_V1, PEAK_R_THRESH, POS_QRS_THRESH, Q_AMP_THRESH, Q_DUR_THRESH, RHYTHM_LEADS, SARRH_THRESH, SIGNAL_LEN, LPR_THRESH, LQRS_THRESH, SPR_THRESH, STD_LEADS, STD_THRESH, STE_THRESH, T_LEADS, TACH_THRESH, VH_LEADS  # noqa: E501
@@ -25,6 +26,14 @@ class EcgStep(StepModule):
     # and a list of names for diagnosis impression that will contribute to the prediction of this diagnosis
     pred_dx_names: list[tuple[str, list[str]]] = []
     NORM_if_NOT: list[str] = []  # names of diagnosis impression for all relevant CVDs in this step
+
+    @property
+    def inverse_pred_dx_names(self) -> dict:
+        inverse_dict = {}
+        for dx, dx_imps in self.pred_dx_names:
+            for dx_imp in dx_imps:
+                inverse_dict[dx_imp] = dx
+        return inverse_dict
 
     @property
     def extra_terms_to_agg(self) -> set[str]:
@@ -208,12 +217,16 @@ class EcgStep(StepModule):
         for feat_imp_name, obj_feat_name in zip(self.feat_imp_names, self.obj_feat_names):
             compared_tuple.append((get_agg_col_name(self.module_name, feat_imp_name), obj_feat_name))
 
+        inverse_pred_dx_names = self.inverse_pred_dx_names
         for imply_name in self.imply_names:
             imply: Imply = getattr(self, imply_name)
             for consequent in imply.consequents:
                 compared_tuple.append((
                     get_agg_col_name(self.module_name, imply.antecedent),  # compare antecedents with all consequents
                     get_agg_col_name(self.module_name, consequent)))
+                if consequent in inverse_pred_dx_names:
+                    compared_tuple.append((get_agg_col_name(self.module_name,
+                                                            imply.antecedent), inverse_pred_dx_names[consequent]))
         return compared_tuple
 
     @property

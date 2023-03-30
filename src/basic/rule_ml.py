@@ -227,6 +227,9 @@ class SeqSteps(StepModule):
         return ensemble_dict
 
 
+RHO = 8
+
+
 class PipelineModule(pl.LightningModule):
     """
     The pipeline module that combines step modules.
@@ -420,6 +423,7 @@ class PipelineModule(pl.LightningModule):
     def on_fit_start(self):
         # self.tb_logger.add_graph(model=self, input_to_model=self.example_input)
         self.tb_logger.add_text('batch_size', str(self.trainer.datamodule.hparams.batch_size), 0)
+        self.tb_logger.add_text("Imply's rho: ", str(RHO), 0)
 
     def training_step(self, batch, batch_idx):
         (y_hat, y), (dx_loss, feat_loss, delta_loss) = self.get_y_and_loss(batch)
@@ -489,7 +493,8 @@ class PipelineModule(pl.LightningModule):
         for xlabel, ylabel in self.compared_agg:
             x = self.mid_output_agg[xlabel]
             y = self.mid_output_agg[ylabel]
-            ax.set_title(f'{ylabel} vs {xlabel}')
+            corr = torch.corrcoef(torch.stack([x, y], dim=0))[0, 1]
+            ax.set_title(f'{ylabel} vs {xlabel} (r={corr:.4f})')
             ax.set_xlabel(xlabel)
             ax.set_ylabel(ylabel)
             ax.scatter(x, y)
@@ -607,10 +612,6 @@ class Not(LogicConnect):
         return 1 - x
 
 
-RHO = 8
-LATTICE_MULTIPLIER = 1e4
-
-
 def inverse_sigmoid(t: torch.Tensor) -> torch.Tensor:
     EPS = 1e-7
     return torch.log((t + EPS) / (1 - t + EPS))
@@ -662,9 +663,9 @@ class Imply(LogicConnect):
         atcd = torch.unsqueeze(self.mid_output[self.antecedent], 1)
         if self.negate_atcd:
             atcd = self.step_module.NOT(atcd)
-        if self.use_lattice:
-            # atcd = inverse_sigmoid(atcd)
-            atcd = atcd * LATTICE_MULTIPLIER
+        # if self.use_lattice:
+        #     # atcd = inverse_sigmoid(atcd)
+        #     atcd = atcd * LATTICE_MULTIPLIER
         return torch.cat((atcd, focused_embed), dim=1)
 
     @property
@@ -717,7 +718,7 @@ class Imply(LogicConnect):
                 self.mid_output[consequent] = torch.sigmoid(mlp_out[:, i] + pre_activated_modification)
             elif self.use_lattice:
                 self.mid_output[consequent] = torch.sigmoid(
-                    torch.squeeze(getattr(self, f"l{i}")(x), dim=1) + pre_activated_modification)
+                    torch.squeeze(getattr(self, f"l{i}")(x[:, [0]]), dim=1) + pre_activated_modification)
 
     def apply_hard_rule(self, x):
         for consequent in self.consequents:
