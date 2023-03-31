@@ -86,14 +86,14 @@ def tune(objective,
 
 
 def visualize_study(study, save_dir: str, use_lattice: bool, use_rule: bool = True):
-    hparams_to_check = ['Embed_n_conv_layers', 'Embed_conv_kernel_size', 'Embed_pool_kernel_size', 'Embed_pool_stride']
-    hparams_to_check.append('Embed_fc_out_dim_l0')
-    if use_rule:
-        all_imply_module_name = ['Rhythm', 'Block', 'WPW', 'ST', 'QR', 'P', 'VH', 'T', 'Axis']
-        for module_name in all_imply_module_name:
-            hparams_to_check.append(f'{module_name}_Imply_fc_out_dim_l0')
-            if use_lattice:
-                hparams_to_check.append(f'{module_name}_Imply_lattice_size')
+    # hparams_to_check = ['Embed_n_conv_layers', 'Embed_conv_kernel_size', 'Embed_pool_kernel_size', 'Embed_pool_stride']
+    # hparams_to_check.append('Embed_fc_out_dim_l0')
+    # if use_rule:
+    #     all_imply_module_name = ['Rhythm', 'Block', 'WPW', 'ST', 'QR', 'P', 'VH', 'T', 'Axis']
+    #     for module_name in all_imply_module_name:
+    #         hparams_to_check.append(f'{module_name}_Imply_fc_out_dim_l0')
+    #         if use_lattice:
+    #             hparams_to_check.append(f'{module_name}_Imply_lattice_size')
 
     # these Figure are from plotly.graph_objects
     # slice_plot = plot_slice(study, params=hparams_to_check)
@@ -228,7 +228,7 @@ def get_pipeline_hparams(trial: optuna.Trial) -> dict:
     return {
         # 'feat_loss_weight': trial.suggest_float('feat_loss_weight', 1e-2, 1e2, log=True),
         # 'delta_loss_weight': trial.suggest_float('delta_loss_weight', 1e-2, 1e4, log=True),
-        'feat_loss_weight': 0.1,
+        'feat_loss_weight': 0.01,
         'delta_loss_weight': 10,
         'is_agg_mid_output': True,
         'is_using_hard_rule': False
@@ -236,20 +236,20 @@ def get_pipeline_hparams(trial: optuna.Trial) -> dict:
 
 
 def get_basic_cnn_hparams(trial: optuna.Trial) -> dict:
-    embed_n_conv_layers = trial.suggest_int('Embed_n_conv_layers', 1, 2)
+    embed_n_conv_layers = trial.suggest_int('Embed_n_conv_layers', 2, 3)
     embed_conv_out_channels = [
-        trial.suggest_int(f"Embed_conv_out_ch_l{i}", 4, 128, log=True) for i in range(embed_n_conv_layers)
+        trial.suggest_int(f"Embed_conv_out_ch_l{i}", 4, 256, log=True) for i in range(embed_n_conv_layers)
     ]
 
     embed_conv_kernel_size = trial.suggest_int('Embed_conv_kernel_size', 8, 24)
     # embed_conv_stride = trial.suggest_int('Embed_conv_stride', 1, 2)
     embed_conv_stride = 1
-    embed_pool_kernel_size = trial.suggest_int('Embed_pool_kernel_size', 2, 4)
-    embed_pool_stride = trial.suggest_int('Embed_pool_stride', 2, embed_pool_kernel_size)
+    embed_pool_kernel_size = 2
+    embed_pool_stride = 2
 
     embed_n_fc_layers = 1
     embed_fc_out_dims = [
-        trial.suggest_int(f"Embed_fc_out_dim_l{i}", 4, 128, log=True) for i in range(embed_n_fc_layers)
+        trial.suggest_int(f"Embed_fc_out_dim_l{i}", 4, 256, log=True) for i in range(embed_n_fc_layers)
     ]
 
     return {
@@ -274,15 +274,15 @@ def get_dummy_ecg_embed_hparams() -> dict:
 
 
 def get_ecg_embed_hparams(trial: optuna.Trial) -> dict:
-    embed_n_conv_layers = trial.suggest_int('Embed_n_conv_layers', 1, 2)
+    embed_n_conv_layers = trial.suggest_int('Embed_n_conv_layers', 2, 3)
     embed_conv_out_channels = [
-        trial.suggest_int(f"Embed_conv_out_ch_l{i}", 4, 128, log=True) for i in range(embed_n_conv_layers)
+        trial.suggest_int(f"Embed_conv_out_ch_l{i}", 4, 256, log=True) for i in range(embed_n_conv_layers)
     ]
     embed_conv_kernel_size = trial.suggest_int('Embed_conv_kernel_size', 8, 24)
     # embed_conv_stride = trial.suggest_int('Embed_conv_stride', 1, 2)
     embed_conv_stride = 1
-    embed_pool_kernel_size = trial.suggest_int('Embed_pool_kernel_size', 2, 4)
-    embed_pool_stride = trial.suggest_int('Embed_pool_stride', 2, embed_pool_kernel_size)
+    embed_pool_kernel_size = 2
+    embed_pool_stride = 2
 
     # embed_n_fc_layers = trial.suggest_int('Embed_n_fc_layers', 1, 3)
     embed_n_fc_layers = 1
