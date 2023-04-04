@@ -70,13 +70,8 @@ def get_delineation(cleaned: NDArray[np.float32], rpeaks: NDArray[np.int64], met
         warnings.simplefilter("ignore", category=RuntimeWarning)
         _, delineation = nk.ecg_delineate(cleaned, rpeaks, sampling_rate=SAMPLING_RATE, method=method)
 
-    # n_feat = [len(rpeaks)]
     for feat_name, feat_indices in delineation.items():
         delineation[feat_name] = np.array(feat_indices)
-        # n_feat.append(len(feat_indices))
-    # n_feat = np.array(n_feat)
-    # TODO: remove
-    # assert len(rpeaks) and np.all(n_feat == n_feat[0])
 
     # Add rpeaks info to the delineation dict
     delineation['ECG_R_Peaks'] = rpeaks

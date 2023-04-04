@@ -3,4 +3,6 @@
 __pycache__/
 data/processed/
 logs/**
+!logs/best/**
 .nfs*
+*.tmp

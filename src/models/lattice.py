@@ -310,6 +310,5 @@ class HL(nn.Module):
 
         # interpolate by using the output of the neural network
         monotone_inputs = x[:, self.cols_monotone]
-        # print(monotone_inputs[:8])
         ret = self.mli.interpolate(monotone_inputs, out)
         return ret.view(-1, 1)

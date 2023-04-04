@@ -7,11 +7,13 @@ PROJECT_PATH = '/home/ftian/storage/ECG_XAI/' if CURRENT_OS == 'Linux' else '/Us
 PTBXL_PATH = os.path.join(PROJECT_PATH, 'data/ptbxl/')
 PROCESSED_DATA_PATH = os.path.join(PROJECT_PATH, 'data/processed/')
 TRAIN_LOG_PATH = os.path.join(PROJECT_PATH, 'logs/train/')
+BEST_MODEL_PATH = os.path.join(PROJECT_PATH, 'logs/best')
 
 # General constants
 MANUAL_SEED = 5
 
 # Training, Validating and Testing
+REPORT_PROB_THRESH = 0.5
 PROB_THRESHOLD = 0.5
 TRAIN_FOLDS = [1, 2, 3, 4, 5, 6]
 VAL_FOLDS = [7, 8]

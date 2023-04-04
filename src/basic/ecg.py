@@ -471,10 +471,3 @@ class Ecg(Signal):
         for delineation in self.delineations:
             for value in delineation.values():
                 value.astype(np.int32)
-
-    def check_cycle(self):
-        # TODO: remove
-        if not self.has_delineated:
-            self.delineate()
-        for key, value in self.delineations[3].items():
-            print(f"{key} has length {len(value)}")

@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import pandas as pd
 from src.basic.constants import AGE_OLD_THRESH, AXIS_LEADS, BLOCK_LEADS, BRAD_THRESH, DEEP_S_THRESH, DOM_R_THRESH, DOM_S_THRESH, INVT_THRESH, LP_THRESH_II, LQRS_WPW_THRESH, LVH_L1_OLD_THRESH, LVH_L1_YOUNG_THRESH, LVH_L2_FEMALE_THRESH, LVH_L2_MALE_THRESH, N_LEADS, LEAD_TO_INDEX, ALL_LEADS, P_LEADS, PEAK_P_THRESH_II, PEAK_P_THRESH_V1, PEAK_R_THRESH, POS_QRS_THRESH, Q_AMP_THRESH, Q_DUR_THRESH, RHYTHM_LEADS, SARRH_THRESH, SIGNAL_LEN, LPR_THRESH, LQRS_THRESH, SPR_THRESH, STD_LEADS, STD_THRESH, STE_THRESH, T_LEADS, TACH_THRESH, VH_LEADS  # noqa: E501
 from src.basic.rule_ml import LT, And, Or, PipelineModule, StepModule, SeqSteps, Imply, GT, Not, ComparisonOp, get_agg_col_name
 from src.basic.dx_and_feat import Diagnosis, Feature, get_by_str
@@ -438,6 +439,21 @@ class RhythmModule(EcgStep):
         ])
         self.SR_imply(imply_input)
 
+    def add_explanation(self, mid_output_agg: pd.Series, report_file_obj):
+        report_file_obj.write('## Step 1: Rhythm Module\n')
+        self.add_obj_feat_exp(mid_output_agg, report_file_obj, 'SINUS')
+        self.add_imply_exp(mid_output_agg, report_file_obj, '~SINUS -> AFIB', '', 'AFIB_imp')
+        self.add_imply_exp(mid_output_agg, report_file_obj, '~SINUS -> AFLT', '', 'AFLT_imp')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'SARRH_imp')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'BRAD_imp')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'TACH_imp')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'SINUS ∧ ~ARRH ∧ BRAD -> SBRAD', 'SBRAD_imply_atcd',
+                           'SBRAD_imp')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'SINUS ∧ ~ARRH ∧ TACH -> STACH', 'STACH_imply_atcd',
+                           'STACH_imp')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'SINUS ∧ ~ARRH ∧ ~SBRAD ∧ ~STACH -> SR', 'SR_imply_atcd',
+                           'SR_imp')
+
 
 class BlockModule(EcgStep):
 
@@ -486,6 +502,14 @@ class BlockModule(EcgStep):
         # LQRS_imp -> LBBB_imp_Block ∧ RBBB_imp_Block
         self.BBB_imply_Block(imply_input)
 
+    def add_explanation(self, mid_output_agg: pd.Series, report_file_obj):
+        report_file_obj.write('## Step 2: Block Module\n')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'LQRS_imp')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'LQRS -> LBBB', '', 'LBBB_imp_Block')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'LQRS -> RBBB', '', 'RBBB_imp_Block')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'LPR_imp')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'LPR -> AVB', '', 'AVB_imp')
+
 
 class WPWModule(EcgStep):
 
@@ -526,20 +550,31 @@ class WPWModule(EcgStep):
         decision_embed = None if self.use_lattice else self.imply_decision_embed_layer(focused_embed)
         imply_input = (focused_embed, decision_embed)
 
-        # ~LBBB_imp_Block ∧ ~RBBB_imp_Block ∧ SPR_imp -> WPW_imp
+        # LQRS_WPW_imp ∧ ~LBBB_imp_Block ∧ ~RBBB_imp_Block ∧ SPR_imp -> WPW_imp
         self.mid_output['WPW_imply_atcd'] = self.AND([
+            self.mid_output['LQRS_WPW_imp'],
             self.NOT(self.all_mid_output[BlockModule.__name__]['LBBB_imp_Block']),
             self.NOT(self.all_mid_output[BlockModule.__name__]['RBBB_imp_Block']), self.mid_output['SPR_imp']
         ])
         self.WPW_imply(imply_input)
 
-        # ~LBBB_imp_Block ∧ ~RBBB_imp_Block ∧ ~WPW_imp -> IVCD_imp
+        # LQRS_WPW_imp ∧ ~LBBB_imp_Block ∧ ~RBBB_imp_Block ∧ ~SPR_imp -> IVCD_imp
         self.mid_output['IVCD_imply_atcd'] = self.AND([
+            self.mid_output['LQRS_WPW_imp'],
             self.NOT(self.all_mid_output[BlockModule.__name__]['LBBB_imp_Block']),
             self.NOT(self.all_mid_output[BlockModule.__name__]['RBBB_imp_Block']),
-            self.NOT(self.mid_output['WPW_imp'])
+            self.NOT(self.mid_output['SPR_imp'])
         ])
         self.IVCD_imply(imply_input)
+
+    def add_explanation(self, mid_output_agg: pd.Series, report_file_obj):
+        report_file_obj.write('## Step 3: WPW Module\n')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'LQRS_WPW_imp')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'SPR_imp')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'LQRS_WPW ∧ ~LBBB ∧ ~RBBB ∧ SPR -> WPW', 'WPW_imply_atcd',
+                           'WPW_imp')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'LQRS_WPW ∧ ~LBBB ∧ ~RBBB ∧ ~SPR -> IVCD',
+                           'IVCD_imply_atcd', 'IVCD_imp')
 
 
 class STModule(EcgStep):
@@ -604,7 +639,7 @@ class STModule(EcgStep):
         decision_embed = None if self.use_lattice else self.imply_decision_embed_layer(focused_embed)
         imply_input = (focused_embed, decision_embed)
 
-        # GOR([STE_II_imp, STE_III_imp, STE_aVF_imp], 2) -> IMI_imp_STE
+        # GOR_2(STE_II_imp, STE_III_imp, STE_aVF_imp) -> IMI_imp_STE
         self.mid_output['IMI_imply_STE_atcd'] = self.GOR(
             [self.mid_output['STE_II_imp'], self.mid_output['STE_III_imp'], self.mid_output['STE_aVF_imp']])
         self.IMI_imply_STE(imply_input)
@@ -619,7 +654,7 @@ class STModule(EcgStep):
         ])
         self.AMI_imply_STE(imply_input)
 
-        # GOR([STE_I_imp, STE_aVL_imp, STE_V5_imp, STE_V6_imp], 2) -> LMI_imp_STE
+        # GOR_2(STE_I_imp, STE_aVL_imp, STE_V5_imp, STE_V6_imp) -> LMI_imp_STE
         self.mid_output['LMI_imply_STE_atcd'] = self.GOR([
             self.mid_output['STE_I_imp'], self.mid_output['STE_aVL_imp'], self.mid_output['STE_V5_imp'],
             self.mid_output['STE_V6_imp']
@@ -630,7 +665,7 @@ class STModule(EcgStep):
         # STD_aVL_imp -> IMI_imp_STD
         self.IMI_imply_STD(imply_input)
 
-        # GOR([STD_II_imp, STD_III_imp, STD_aVF_imp], 2) -> AMI_imp_STD ∧ LMI_imp_STD
+        # GOR_2(STD_II_imp, STD_III_imp, STD_aVF_imp) -> AMI_imp_STD ∧ LMI_imp_STD
         self.mid_output['AMI_LMI_imply_STD_atcd'] = self.GOR(
             [self.mid_output['STD_II_imp'], self.mid_output['STD_III_imp'], self.mid_output['STD_aVF_imp']])
         self.AMI_LMI_imply_STD(imply_input)
@@ -643,6 +678,30 @@ class STModule(EcgStep):
         self.mid_output['RVH_imply_STD_atcd'] = self.AND(
             [self.mid_output['STD_V1_imp'], self.mid_output['STD_V2_imp'], self.mid_output['STD_V3_imp']])
         self.RVH_imply_STD(imply_input)
+
+    def add_explanation(self, mid_output_agg: pd.Series, report_file_obj):
+        report_file_obj.write('## Step 4: ST Module\n')
+        for lead in ALL_LEADS:
+            self.add_comp_exp(mid_output_agg, report_file_obj, f'STE_{lead}_imp')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'GOR_2(STE_II, STE_III, STE_aVF) -> IMI',
+                           'IMI_imply_STE_atcd', 'IMI_imp_STE')
+        self.add_imply_exp(mid_output_agg, report_file_obj,
+                           '(STE_V1 ∧ STE_V2) ∨ (STE_V2 ∧ STE_V3) ∨ ... ∨ (STE_V5 ∧ STE_V6) -> AMI',
+                           'AMI_imply_STE_atcd', 'AMI_imp_STE')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'GOR_2(STE_I, STE_aVL, STE_V5, STE_V6) -> LMI',
+                           'LMI_imply_STE_atcd', 'LMI_imp_STE')
+        report_file_obj.write('### Ancillary Criteria using STD\n')
+        for lead in STD_LEADS:
+            self.add_comp_exp(mid_output_agg, report_file_obj, f'STD_{lead}_imp')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'STD_aVL -> IMI', '', 'IMI_imp_STD')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'GOR_2(STD_II, STD_III, STD_aVF) -> AMI',
+                           'AMI_LMI_imply_STD_atcd', 'AMI_imp_STD')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'GOR_2(STD_II, STD_III, STD_aVF) -> LMI',
+                           'AMI_LMI_imply_STD_atcd', 'LMI_imp_STD')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'STD_V5 ∨ STD_V6 -> LVH', 'LVH_imply_STD_atcd',
+                           'LVH_imp_STD')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'STD_V1 ∧ STD_V2 ∧ STD_V3 -> RVH', 'RVH_imply_STD_atcd',
+                           'RVH_imp_STD')
 
 
 class QRModule(EcgStep):
@@ -706,7 +765,7 @@ class QRModule(EcgStep):
         # PRWP -> AMI_imp_PRWP ∧ LVH_imp_PRWP ∧ LBBB_imp_PRWP
         self.PRWP_imply(imply_input)
 
-        # GOR([PATH_Q_II_imp, PATH_Q_III_imp, PATH_Q_aVF_imp], 2) -> IMI_imp_Q
+        # GOR_2(PATH_Q_II_imp, PATH_Q_III_imp, PATH_Q_aVF_imp) -> IMI_imp_Q
         self.mid_output['IMI_imply_Q_atcd'] = self.GOR(
             [self.mid_output['PATH_Q_II_imp'], self.mid_output['PATH_Q_III_imp'], self.mid_output['PATH_Q_aVF_imp']])
         self.IMI_imply_Q(imply_input)
@@ -718,12 +777,30 @@ class QRModule(EcgStep):
         ])
         self.AMI_imply_Q(imply_input)
 
-        # GOR([PATH_Q_I_imp, PATH_Q_aVL_imp, PATH_Q_V5_imp, PATH_Q_V6_imp], 2) -> LMI_imp_Q
+        # GOR_2(PATH_Q_I_imp, PATH_Q_aVL_imp, PATH_Q_V5_imp, PATH_Q_V6_imp) -> LMI_imp_Q
         self.mid_output['LMI_imply_Q_atcd'] = self.GOR([
             self.mid_output['PATH_Q_I_imp'], self.mid_output['PATH_Q_aVL_imp'], self.mid_output['PATH_Q_V5_imp'],
             self.mid_output['PATH_Q_V6_imp']
         ])
         self.LMI_imply_Q(imply_input)
+
+    def add_explanation(self, mid_output_agg: pd.Series, report_file_obj):
+        report_file_obj.write('## Step 5: QR Module\n')
+        report_file_obj.write('### Ancillary Criteria using Pathological Q wave and Poor R wave Progression\n')
+
+        self.add_obj_feat_exp(mid_output_agg, report_file_obj, 'PRWP')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'PRWP -> AMI', '', 'AMI_imp_PRWP')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'PRWP -> LVH', '', 'LVH_imp_PRWP')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'PRWP -> LBBB', '', 'LBBB_imp_PRWP')
+
+        for lead in ALL_LEADS:
+            self.add_comp_exp(mid_output_agg, report_file_obj, f'PATH_Q_{lead}_imp')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'GOR_2(PATH_Q_II, PATH_Q_III, PATH_Q_aVF) -> IMI',
+                           'IMI_imply_Q_atcd', 'IMI_imp_Q')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'PATH_Q_V1 ∧ PATH_Q_V2 ∧ PATH_Q_V3 ∧ PATH_Q_V4 -> AMI',
+                           'AMI_imply_Q_atcd', 'AMI_imp_Q')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'GOR_2(PATH_Q_I, PATH_Q_aVL, PATH_Q_V5, PATH_Q_V6) -> LMI',
+                           'LMI_imply_Q_atcd', 'LMI_imp_Q')
 
 
 class PModule(EcgStep):
@@ -791,6 +868,17 @@ class PModule(EcgStep):
 
         # RAE_imp -> RVH_imp_P
         self.RVH_imply_P(imply_input)
+
+    def add_explanation(self, mid_output_agg: pd.Series, report_file_obj):
+        report_file_obj.write('## Step 5: P Module\n')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'LP_II_imp')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'LP_II -> LAE', '', 'LAE_imp')
+
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'PEAK_P_II_imp')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'PEAK_P_V1_imp')
+        self.add_imply_exp(mid)
+
+        report_file_obj.write('### Ancillary Criteria using LAE and RAE\n')
 
 
 class VHModule(EcgStep):

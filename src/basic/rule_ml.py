@@ -140,6 +140,49 @@ class StepModule(nn.Module):
         """
         pass
 
+    def add_explanation(self, mid_output_agg: pd.Series, report_file_obj):
+        """
+        Add explanation to the given report file object according to the aggregated mid_output.
+        """
+        pass
+
+    def get_mid_output_and_name(self, mid_output_agg: pd.Series, mid_output_imp_name: str):
+        """
+        Get the impression value and name of the given mid_output impression name.
+        """
+        mid_output_imp = mid_output_agg[f"{self.module_name}_{mid_output_imp_name}"]
+        mid_output_name = mid_output_imp_name.split('_imp')[0]
+        return mid_output_imp, mid_output_name
+
+    def add_obj_feat_exp(self, mid_output_agg: pd.Series, report_file_obj, obj_feat_name: str):
+        """
+        Add explanation for objective feature to the given report file object according to the aggregated mid_output.
+        """
+        obj_feat = mid_output_agg[f"{obj_feat_name}"]
+        report_file_obj.write(f"*{obj_feat_name} is* {obj_feat:.3f}\n")
+
+    def add_comp_exp(self, mid_output_agg: pd.Series, report_file_obj, feat_imp_name: str):
+        """
+        Add explanation for comparison to the given report file object according to the aggregated mid_output.
+        """
+        feat_imp, feat_name = self.get_mid_output_and_name(mid_output_agg, feat_imp_name)
+        report_file_obj.write(f"*{self.module_name}'s impression for {feat_name} is* {feat_imp:.3f}\n")
+
+    def add_imply_exp(self, mid_output_agg: pd.Series, report_file_obj, imply_formula: str, atcd_imp_name: str,
+                      consequent_imp_name: str):
+        """
+        Add explanation for implication to the given report file object according to the aggregated mid_output.
+        """
+
+        consequent_imp, consequent_name = self.get_mid_output_and_name(mid_output_agg, consequent_imp_name)
+
+        exp = f"- By {imply_formula}, {self.module_name}'s impression for {consequent_name} is {consequent_imp:.3f}"
+        if atcd_imp_name.endswith('_atcd'):
+            atcd_imp = mid_output_agg[f"{self.module_name}_{atcd_imp_name}"]
+            exp += f" and the antecedent impression is {atcd_imp:.3f}"
+        exp += '\n'
+        report_file_obj.write(exp)
+
 
 def get_agg_col_name(module_name: str, mid_output_name: str):
     return f"{module_name}_{mid_output_name}"
@@ -225,6 +268,10 @@ class SeqSteps(StepModule):
                     ensemble_dict[dx] = []
                 ensemble_dict[dx].extend(terms)
         return ensemble_dict
+
+    def add_explanation(self, mid_output_agg: pd.Series, report_file_obj):
+        for step in self.steps:
+            step.add_explanation(mid_output_agg, report_file_obj)
 
 
 RHO = 8
@@ -319,15 +366,6 @@ class PipelineModule(pl.LightningModule):
 
     def use_soft_rule(self):
         self.pipeline.use_soft_rule()
-
-    # TODO: remove
-    def log_metric(self, phase: str, metric_result, metric_names: list[str], on_epoch: bool):
-        suffix = '_epoch' if on_epoch else '_step'
-        for metric_name in metric_names:
-            self.log(f"{phase}{suffix}/{metric_name}",
-                     metric_result[metric_name],
-                     on_step=not on_epoch,
-                     on_epoch=on_epoch)
 
     def forward(self, batched_ecg: torch.Tensor, batched_obj_feat: torch.Tensor):
         self.pipeline((batched_ecg, batched_obj_feat))
@@ -527,6 +565,21 @@ class PipelineModule(pl.LightningModule):
         # need to remove optimizer_idx if migrated to pytorch-lightning 2.0
         self.log_dict(grad_norm(self, norm_type=2))
         # pass
+
+    def generate_report(self, path_to_agg: str, patient_idx: int = 0):
+        """
+        Generate a report for the model
+
+        Args:
+            mid_output_agg_file_path: path to the aggregated mid output csv file
+            report_file_path: path to the report file
+        """
+        all_mid_output_agg_df = pd.read_csv(path_to_agg, header=0, index_col=0)
+        mid_output_agg: pd.Series = all_mid_output_agg_df.loc[patient_idx]
+        report_file_path = os.path.splitext(path_to_agg)[0] + f'_report_for_patient_at_{patient_idx}.md'
+        with open(report_file_path, 'w') as f:
+            f.write('# Diagnosis Report\n')
+            self.pipeline.add_explanation(mid_output_agg, f)
 
 
 ########################################
