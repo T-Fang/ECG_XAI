@@ -3,7 +3,7 @@ from matplotlib import pyplot as plt
 import pandas as pd
 
 
-def scatter_two_agg(path_to_agg: str, x_name, y_name):
+def scatter_two_agg(path_to_agg: str, x_name, y_name, title=None, xlabel=None, ylabel=None):
     """
         Compare the aggregated mid output via scatter plot
         """
@@ -14,6 +14,9 @@ def scatter_two_agg(path_to_agg: str, x_name, y_name):
     y = all_mid_output.loc[:, y_name]
     fig, ax = plt.subplots()
     corr = x.corr(y)
+    title = f'{y_name} vs {x_name} (r={corr:.4f})' if not title else title + f' (r={corr:.4f})'
+    xlabel = x_name if not xlabel else xlabel
+    ylabel = y_name if not ylabel else ylabel
     ax.set_title(f'{y_name} vs {x_name} (r={corr:.4f})')
     ax.set_xlabel(x_name)
     ax.set_ylabel(y_name)
