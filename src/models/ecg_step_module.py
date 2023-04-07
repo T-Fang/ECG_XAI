@@ -444,7 +444,8 @@ class RhythmModule(EcgStep):
         self.add_obj_feat_exp(mid_output_agg, report_file_obj, 'SINUS')
         self.add_imply_exp(mid_output_agg, report_file_obj, '~SINUS -> AFIB', '', 'AFIB_imp')
         self.add_imply_exp(mid_output_agg, report_file_obj, '~SINUS -> AFLT', '', 'AFLT_imp')
-        self.add_comp_exp(mid_output_agg, report_file_obj, 'SARRH_imp')
+        # self.add_comp_exp(mid_output_agg, report_file_obj, 'ARRH_imp')
+        self.add_obj_feat_exp(mid_output_agg, report_file_obj, 'HR')
         self.add_comp_exp(mid_output_agg, report_file_obj, 'BRAD_imp')
         self.add_comp_exp(mid_output_agg, report_file_obj, 'TACH_imp')
         self.add_imply_exp(mid_output_agg, report_file_obj, 'SINUS ∧ ~ARRH ∧ BRAD -> SBRAD', 'SBRAD_imply_atcd',
@@ -690,7 +691,7 @@ class STModule(EcgStep):
                            'AMI_imply_STE_atcd', 'AMI_imp_STE')
         self.add_imply_exp(mid_output_agg, report_file_obj, 'GOR_2(STE_I, STE_aVL, STE_V5, STE_V6) -> LMI',
                            'LMI_imply_STE_atcd', 'LMI_imp_STE')
-        report_file_obj.write('### Ancillary Criteria using STD\n')
+        report_file_obj.write('### Ancillary criteria using STD\n')
         for lead in STD_LEADS:
             self.add_comp_exp(mid_output_agg, report_file_obj, f'STD_{lead}_imp')
         self.add_imply_exp(mid_output_agg, report_file_obj, 'STD_aVL -> IMI', '', 'IMI_imp_STD')
@@ -786,7 +787,7 @@ class QRModule(EcgStep):
 
     def add_explanation(self, mid_output_agg: pd.Series, report_file_obj):
         report_file_obj.write('## Step 5: QR Module\n')
-        report_file_obj.write('### Ancillary Criteria using Pathological Q wave and Poor R wave Progression\n')
+        report_file_obj.write('### Ancillary criteria using Pathological Q wave and Poor R wave Progression\n')
 
         self.add_obj_feat_exp(mid_output_agg, report_file_obj, 'PRWP')
         self.add_imply_exp(mid_output_agg, report_file_obj, 'PRWP -> AMI', '', 'AMI_imp_PRWP')
@@ -870,15 +871,17 @@ class PModule(EcgStep):
         self.RVH_imply_P(imply_input)
 
     def add_explanation(self, mid_output_agg: pd.Series, report_file_obj):
-        report_file_obj.write('## Step 5: P Module\n')
+        report_file_obj.write('## Step 6: P Module\n')
         self.add_comp_exp(mid_output_agg, report_file_obj, 'LP_II_imp')
         self.add_imply_exp(mid_output_agg, report_file_obj, 'LP_II -> LAE', '', 'LAE_imp')
 
         self.add_comp_exp(mid_output_agg, report_file_obj, 'PEAK_P_II_imp')
         self.add_comp_exp(mid_output_agg, report_file_obj, 'PEAK_P_V1_imp')
-        self.add_imply_exp(mid)
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'PEAK_P_II ∨ PEAK_P_V1 -> RAE', 'RAE_imply_atcd', 'RAE_imp')
 
-        report_file_obj.write('### Ancillary Criteria using LAE and RAE\n')
+        report_file_obj.write('### Ancillary criteria using LAE and RAE\n')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'LAE -> LVH', '', 'LVH_imp_P')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'RAE -> RVH', '', 'RVH_imp_P')
 
 
 class VHModule(EcgStep):
@@ -969,7 +972,7 @@ class VHModule(EcgStep):
         ])
         self.LVH_imply_VH(imply_input)
 
-        # GOR([PEAK_R_V1_imp, DEEP_S_V5_imp ∨ DEEP_S_V6_imp, DOM_R_V1_imp, DOM_S_V5_imp ∨ DOM_S_V6_imp, RAD], 2) -> RVH_imp_VH
+        # GOR_2(PEAK_R_V1_imp, DEEP_S_V5_imp ∨ DEEP_S_V6_imp, DOM_R_V1_imp, DOM_S_V5_imp ∨ DOM_S_V6_imp, RAD) -> RVH_imp_VH
         self.mid_output['RVH_imply_VH_atcd'] = self.GOR([
             self.mid_output['PEAK_R_V1_imp'],
             self.OR([self.mid_output['DEEP_S_V5_imp'], self.mid_output['DEEP_S_V6_imp']]),
@@ -978,6 +981,30 @@ class VHModule(EcgStep):
             RAD,
         ])
         self.RVH_imply_VH(imply_input)
+
+    def add_explanation(self, mid_output_agg: pd.Series, report_file_obj):
+        report_file_obj.write('## Step 7: VH Module\n')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'AGE_OLD_imp')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'LVH_L1_OLD_imp')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'LVH_L1_YOUNG_imp')
+        self.add_obj_feat_exp(mid_output_agg, report_file_obj, 'MALE')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'LVH_L2_MALE_imp')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'LVH_L2_FEMALE_imp')
+        self.add_imply_exp(
+            mid_output_agg, report_file_obj,
+            '(AGE_OLD ∧ LVH_L1_OLD) ∨ (~AGE_OLD ∧ LVH_L1_YOUNG) ∨ (MALE ∧ LVH_L2_MALE) ∨ (~MALE ∧ LVH_L2_FEMALE) -> LVH',
+            'LVH_imply_VH_atcd', 'LVH_imp_VH')
+
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'PEAK_R_V1_imp')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'DEEP_S_V5_imp')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'DEEP_S_V6_imp')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'DOM_R_V1_imp')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'DOM_S_V5_imp')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'DOM_S_V6_imp')
+        self.add_obj_feat_exp(mid_output_agg, report_file_obj, 'RAD')
+        self.add_imply_exp(mid_output_agg, report_file_obj,
+                           'GOR_2(PEAK_R_V1, DEEP_S_V5 ∨ DEEP_S_V6, DOM_R_V1, DOM_S_V5 ∨ DOM_S_V6, RAD) -> RVH',
+                           'RVH_imply_VH_atcd', 'RVH_imp_VH')
 
 
 class TModule(EcgStep):
@@ -1026,7 +1053,7 @@ class TModule(EcgStep):
         decision_embed = None if self.use_lattice else self.imply_decision_embed_layer(focused_embed)
         imply_input = (focused_embed, decision_embed)
 
-        # GOR([INVT_imp_x ∧ (STE_x_imp ∨ STD_x_imp), for x ∈ {I, II, V3-V6}], 2) -> IMI_imp_T ∧ AMI_imp_T ∧ LMI_imp_T
+        # GOR_2([INVT_imp_x ∧ (STE_x_imp ∨ STD_x_imp), for x ∈ {I, II, V3-V6}]) -> IMI_imp_T ∧ AMI_imp_T ∧ LMI_imp_T
         self.mid_output['MI_imply_T_atcd'] = self.GOR([
             self.AND([
                 self.mid_output['INVT_I_imp'],
@@ -1082,6 +1109,25 @@ class TModule(EcgStep):
         self.mid_output['RVH_imply_T_atcd'] = self.AND(
             [self.mid_output['INVT_V1_imp'], self.mid_output['INVT_V2_imp'], self.mid_output['INVT_V3_imp']])
         self.RVH_imply_T(imply_input)
+
+    def add_explanation(self, mid_output_agg: pd.Series, report_file_obj):
+        report_file_obj.write('## Step 8: T Module\n')
+        for lead in T_LEADS:
+            self.add_comp_exp(mid_output_agg, report_file_obj, f'INVT_{lead}_imp')
+        self.add_imply_exp(mid_output_agg, report_file_obj,
+                           'GOR_2([INVT_x ∧ (STE_x ∨ STD_x), for x ∈ {I, II, V3-V6}]) -> IMI',
+                           'MI_imply_T_atcd', 'IMI_imp_T')
+        self.add_imply_exp(mid_output_agg, report_file_obj,
+                           'GOR_2([INVT_x ∧ (STE_x ∨ STD_x), for x ∈ {I, II, V3-V6}]) -> AMI', 'MI_imply_T_atcd',
+                           'AMI_imp_T')
+        self.add_imply_exp(mid_output_agg, report_file_obj,
+                           'GOR_2([INVT_x ∧ (STE_x ∨ STD_x), for x ∈ {I, II, V3-V6}]) -> LMI', 'MI_imply_T_atcd',
+                           'LMI_imp_T')
+
+        report_file_obj.write('### Ancillary criteria using inverted T wave\n')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'INVT_V5 ∨ INVT_V6 -> LVH', 'LVH_imply_T_atcd', 'LVH_imp_T')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'INVT_V1 ∧ INVT_V2 ∧ INVT_V3 -> RVH', 'RVH_imply_T_atcd',
+                           'RVH_imp_T')
 
 
 class AxisModule(EcgStep):
@@ -1140,6 +1186,19 @@ class AxisModule(EcgStep):
 
         # RAD_imp -> LPFB_imp
         self.LPFB_imply(imply_input)
+
+    def add_explanation(self, mid_output_agg: pd.Series, report_file_obj):
+        report_file_obj.write('## Step 9: Axis Module\n')
+        report_file_obj.write('### Ancillary criteria using electrical axis\n')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'POS_QRS_I_imp')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'POS_QRS_aVF_imp')
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'NORM_AXIS_imp')
+
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'LAD_imp')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'LAD -> LAFB', '', 'LAFB_imp')
+
+        self.add_comp_exp(mid_output_agg, report_file_obj, 'RAD_imp')
+        self.add_imply_exp(mid_output_agg, report_file_obj, 'RAD -> LPFB', '', 'LPFB_imp')
 
 
 class BasicCnnPipeline(PipelineModule):

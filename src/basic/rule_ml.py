@@ -183,6 +183,24 @@ class StepModule(nn.Module):
         exp += '\n'
         report_file_obj.write(exp)
 
+    def add_all_dx_exp(self, mid_output_agg: pd.Series, report_file_obj):
+        """
+        Add prediction of all diagnoses to the given report file object according to the aggregated mid_output.
+        """
+
+        report_file_obj.write('\n')
+        report_file_obj.write('\n')
+        report_file_obj.write('## **Differential Diagnoses from the ECG-XAI system**\n\n')
+
+        dx_pred_list = []
+        for dx in Diagnosis:
+            dx_name = f"{dx.name}_hat"
+            dx_pred = mid_output_agg[dx_name]
+            dx_pred_list.append((dx.name, dx_pred))
+        sorted_dx_pred_list = sorted(dx_pred_list, key=lambda x: x[1], reverse=True)
+        for dx_name, dx_pred in sorted_dx_pred_list:
+            report_file_obj.write(f"\t {dx_name}: {dx_pred:.3f}\n")
+
 
 def get_agg_col_name(module_name: str, mid_output_name: str):
     return f"{module_name}_{mid_output_name}"
@@ -272,6 +290,7 @@ class SeqSteps(StepModule):
     def add_explanation(self, mid_output_agg: pd.Series, report_file_obj):
         for step in self.steps:
             step.add_explanation(mid_output_agg, report_file_obj)
+        self.add_all_dx_exp(mid_output_agg, report_file_obj)
 
 
 RHO = 8
