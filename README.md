@@ -1,6 +1,6 @@
 # ECG_XAI
 
-This repository contains the implementation for my Final Year Project at NUS. In this project, I developed a scalable explainable AI (XAI) framework for electrocardiogram (ECG) diagnosis. The framework can easily incorporate ECG rules expressible in First-order Logic (FOL), automatically capture intermediate interpretable ECG features, and finally produce a diagnosis report comprehensible to cardiologists. The detailed report can be found [here](Final Report (Tian Fang).pdf).
+This repository contains the implementation for my Final Year Project at NUS. In this project, I developed a scalable explainable AI (XAI) framework for electrocardiogram (ECG) diagnosis. The framework can easily incorporate ECG rules expressible in First-order Logic (FOL), automatically capture intermediate interpretable ECG features, and finally produce a diagnosis report comprehensible to cardiologists. The detailed report can be found [here](Final_Report.pdf).
 
 
 
