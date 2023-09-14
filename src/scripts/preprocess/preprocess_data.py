@@ -1,6 +1,6 @@
 import sys
 
-sys.path.insert(1, '/home/ftian/storage/ECG_XAI/')
+sys.path.insert(1, '/home/ftian/storage/projects/ECG_XAI/')
 from src.utils.data_utils import EcgDataModule  # noqa: E402
 
 if __name__ == '__main__':
