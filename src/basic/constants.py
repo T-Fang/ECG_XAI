@@ -3,7 +3,7 @@ import platform
 
 # File Names
 CURRENT_OS = platform.system()
-PROJECT_PATH = '/home/ftian/storage/ECG_XAI/' if CURRENT_OS == 'Linux' else '/Users/tf/Computer_Science/Archive/FYP/ECG_XAI/'
+PROJECT_PATH = '/home/ftian/storage/projects/ECG_XAI/' if CURRENT_OS == 'Linux' else '/Users/tf/Computer_Science/Archive/FYP/ECG_XAI/'
 PTBXL_PATH = os.path.join(PROJECT_PATH, 'data/ptbxl/')
 PROCESSED_DATA_PATH = os.path.join(PROJECT_PATH, 'data/processed/')
 TRAIN_LOG_PATH = os.path.join(PROJECT_PATH, 'logs/train/')
