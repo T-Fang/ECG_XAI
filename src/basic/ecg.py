@@ -16,7 +16,7 @@ from src.basic.constants import AGE_OLD_THRESH, LVH_L1_OLD_THRESH, LVH_L1_YOUNG_
 from src.utils.ecg_utils import get_all_rpeaks, get_all_delineations, custom_ecg_delineate_plot, check_inverted_wave, check_all_inverted_waves  # noqa: E501
 from src.basic.cardiac_cycle import CardiacCycle, get_all_cycles
 
-VERBOSE = True  # for debugging purpose only
+VERBOSE = False  # for debugging purpose only
 
 
 class Ecg(Signal):
@@ -51,7 +51,6 @@ class Ecg(Signal):
 
     def _preprocess(self):
         self.get_cycles()
-        # self.delineate()
 
     def clean(self):
         """
@@ -107,9 +106,10 @@ class Ecg(Signal):
 
         # Delineate the ECG signal
         try:
+
             self.delineations: list[dict[str, list]] = get_all_delineations(self.cleaned,
-                                                                            self.all_rpeaks,
-                                                                            method=method)
+                                                                        self.all_rpeaks,
+                                                                        method=method)
         except:  # noqa: E722
             if VERBOSE:
                 print('--> Cannot delineate the ECG signal')
@@ -194,6 +194,7 @@ class Ecg(Signal):
         """
         if not self.has_cycles:
             self.get_cycles()
+
         if VERBOSE:
             print('Calculating features...')
         self.add_extra_info()
@@ -228,6 +229,61 @@ class Ecg(Signal):
 
         # * calculate objective features for AxisModule
         self.calc_axis()
+
+    def calc_feat_NEW(self,feat_list):
+        """
+        Calculate all features
+        """
+        if not self.has_cycles:
+            self.get_cycles()
+
+        if VERBOSE:
+            print('Calculating features...')
+
+        self.add_extra_info()
+
+        # * calculate objective features for RhythmModule
+        if "HR" in feat_list:
+            self.calc_heart_rate()
+        if "SINUS" in feat_list:
+            self.calc_sinus()
+        if "RR_DIFF" in feat_list:
+            self.calc_RR_DIFF()
+
+        # * calculate objective features for BlockModule
+        if "LPR" or "SPR" or "PR_DUR" in feat_list:
+            self.calc_PR()
+        if "LQRS" or "LQRS_WPW" or "QRS_DUR" in feat_list:
+            self.calc_QRS()
+
+        # * calculate objective features for WPWModule
+        # Already calculated when getting objective features for BlockModule
+
+        # * calculate objective features for STModule
+        if "STD" or "STE" or "ST_AMP" in feat_list:
+            self.calc_ST()
+
+        # * calculate objective features for QRModule
+        if "PRWP" in feat_list:
+            self.calc_PRWP()
+        if "Q_DUR" or "Q_AMP" or "PATH_Q" in feat_list:
+            self.calc_PATH_Q()
+
+        # * calculate objective features for PModule
+        if "P_DUR" or "P_AMP" or "PEAK_P" in feat_list:
+            self.calc_P()
+
+        # * calculate objective features for VHModule
+        if "AGE" or "AGE_OLD" or "MALE" or "R_AMP" or "S_AMP" or "PEAK_R" or "DOM_R" or "RS_RATIO" in feat_list:
+            self.calc_VH_related()
+
+        # * calculate objective features for TModule
+        if "T_AMP" in feat_list:
+            self.calc_T()
+
+        # * calculate objective features for AxisModule
+        if "POS_QRS" or "QRS_SUM" or "NORM_AXIS" or "LAD" or "RAD" in feat_list:
+            self.calc_axis()
 
     def add_extra_info(self):
         """
@@ -316,6 +372,9 @@ class Ecg(Signal):
     # * Objective features for BlockModule
     def calc_PR(self):
         self.LPR, self.SPR, self.PR_DUR = self.agg_feat_across_leads(lambda cycle: cycle.get_PR_dur())
+
+    def calc_LPR(self):
+        self.LPR, _,_ = self.agg_feat_across_leads(lambda cycle: cycle.get_PR_dur())
 
     def calc_QRS(self):
         self.LQRS, self.LQRS_WPW, self.QRS_DUR = self.agg_feat_across_leads(lambda cycle: cycle.get_QRS_dur())

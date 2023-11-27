@@ -10,8 +10,6 @@ from pytorch_lightning.utilities import grad_norm
 from pytorch_lightning.loggers import TensorBoardLogger
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset
-# from pmlayer.torch.layers import HLattice
-from src.models.lattice import HL
 # from pmlayer.torch.hierarchical_lattice_layer import HLattice
 from torchmetrics import MetricCollection
 from torchmetrics.classification import MultilabelAccuracy, MultilabelAUROC, MultilabelAveragePrecision
@@ -728,8 +726,6 @@ class Imply(LogicConnect):
         # define models
         if self.use_mlp:
             self.init_mlp()
-        elif self.use_lattice:
-            self.init_lattice()
 
     def cat_atcd_with(self, focused_embed: torch.Tensor) -> torch.Tensor:
         """
@@ -766,15 +762,6 @@ class Imply(LogicConnect):
     def init_mlp(self):
         self.add_module("mlp_output", nn.Linear(self.output_dims[-1], self.n_consequents))
 
-    def init_lattice(self):
-        sizes = torch.tensor(self.lattice_sizes, dtype=torch.long)
-        if torch.cuda.is_available():
-            sizes = sizes.to(torch.device('cuda:0'))
-
-        # For Imply without lattice, all consequents will share the embed layer and have their own output layer
-        for i in range(self.n_consequents):
-            self.add_module(f"l{i}", HL(self.input_dim, sizes, self.lattice_inc_indices))
-
     def apply_soft_rule(self, x):
         focused_embed, decision_embed = x
         # decision_embed (of size batch_size x (output_dims[-1])) is results after passing non-monotonic input through an MLP
@@ -791,9 +778,6 @@ class Imply(LogicConnect):
 
             if self.use_mlp:
                 self.mid_output[consequent] = torch.sigmoid(mlp_out[:, i] + pre_activated_modification)
-            elif self.use_lattice:
-                self.mid_output[consequent] = torch.sigmoid(
-                    torch.squeeze(getattr(self, f"l{i}")(x[:, [0]]), dim=1) + pre_activated_modification)
 
     def apply_hard_rule(self, x):
         for consequent in self.consequents:

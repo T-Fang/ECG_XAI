@@ -1,4 +1,5 @@
 import os
+
 import optuna
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -43,7 +44,10 @@ def objective(trial: optuna.Trial, datamodule: EcgDataModule, save_dir: str):
         callbacks=get_trainer_callbacks(trial, SAVE_TOP_K),
         logger=TensorBoardLogger(save_dir=save_dir),
         max_epochs=MAX_EPOCHS,
-        auto_scale_batch_size='power',  # Use Tuner for pytorch_lightning >= 2.0
+        # auto_scale_batch_size='power',  # Use Tuner for pytorch_lightning >= 2.0
+        auto_scale_batch_size=False,
+        limit_train_batches=32,
+        limit_val_batches=32,
         # limit_train_batches=2,
         # limit_val_batches=2,
         **get_common_trainer_params())
@@ -55,20 +59,20 @@ def objective(trial: optuna.Trial, datamodule: EcgDataModule, save_dir: str):
     # tuner.scale_batch_size(model, datamodule=datamodule, mode="binsearch")
     if datamodule.hparams.batch_size <= 16:
         raise torch.cuda.OutOfMemoryError("Batch size <= 16, it's likely that OOM Error has occur")
-    if len(datamodule.train_ds) % datamodule.hparams.batch_size == 1:
-        datamodule.hparams.batch_size -= 1
+    # if len(datamodule.train_ds) % datamodule.hparams.batch_size == 1:
+    #     datamodule.hparams.batch_size -= 1
 
     # datamodule.hparams.batch_size = 2048
 
     print('Using batch size: ', datamodule.hparams.batch_size)
 
-    trainer.fit(model, datamodule)
+    trainer.fit(model=model, datamodule=datamodule)
 
     return trainer.callback_metrics["val_metrics/auroc"].item()
 
 
 if __name__ == '__main__':
-    set_cuda_env(gpu_ids='5')
+    set_cuda_env(gpu_ids="0,1,2,3")
     study = tune(objective,
                  n_trials=N_TRIALS,
                  timeout=TIMEOUT,

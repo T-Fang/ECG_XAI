@@ -21,9 +21,26 @@ class CardiacCycle():
 
     def __post_init__(self):
         # convert all fields to int
-        for f in self.__dataclass_fields__:
+        # print("******************************")
+        self.P_onset=int(self.P_onset)
+        self.P_peak = int(self.P_peak)
+        self.P_offset=int(self.P_offset)
+        self.QRS_onset=int(self.QRS_onset)
+        self.Q_peak=int(self.Q_peak)
+        self.R_peak=int(self.R_peak)
+        self.S_peak=int(self.S_peak)
+        self.QRS_offset=int(self.QRS_offset)
+        self.T_onset=int(self.T_onset)
+        self.T_peak=int(self.T_peak)
+        self.T_offset=int(self.T_offset)
+
+        for f in self.__dataclass_fields__.keys():
             if f == 'extra_info':
-                setattr(self, f, int(getattr(self, f)))
+                # print("--------------")
+                # print(getattr(self, f))
+                for key,value in getattr(self,f):
+                    setattr(self,f,int(value))
+                #setattr(self, f, int(getattr(self, f)))
 
     @property
     def ecg(self):
@@ -88,6 +105,8 @@ class CardiacCycle():
         """
 
         def calc_Q_offset():
+            print("Q",self.Q_peak)
+            print("R",self.R_peak)
             if self.signal[self.Q_peak] > 0 or self.signal[self.R_peak] < 0:
                 return None
             if self.signal[self.Q_peak] == 0:
@@ -169,9 +188,10 @@ def get_cycles_in_lead(delineation: dict[str, NDArray[np.int64]]) -> list[Cardia
         delineation['ECG_R_Onsets'], delineation['ECG_Q_Peaks'], delineation['ECG_R_Peaks'], delineation['ECG_S_Peaks'],
         delineation['ECG_R_Offsets'], delineation['ECG_T_Onsets'], delineation['ECG_T_Peaks'],
         delineation['ECG_T_Offsets']
-    ],
-                               axis=1)  # noqa: E126
+    ],axis=1)  # noqa: E126
     # remove cardiac cycle with nan
+    # print("delineation",delineation)
+    # print(feature_indices[0])
     feature_indices = feature_indices[~np.isnan(feature_indices).any(axis=1)]
     return [indices2cycle(indices) for indices in feature_indices]
 

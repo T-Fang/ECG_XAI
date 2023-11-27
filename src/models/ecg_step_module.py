@@ -1,8 +1,13 @@
 import torch
 import torch.nn as nn
 import pandas as pd
-from src.basic.constants import AGE_OLD_THRESH, AXIS_LEADS, BLOCK_LEADS, BRAD_THRESH, DEEP_S_THRESH, DOM_R_THRESH, DOM_S_THRESH, INVT_THRESH, LP_THRESH_II, LQRS_WPW_THRESH, LVH_L1_OLD_THRESH, LVH_L1_YOUNG_THRESH, LVH_L2_FEMALE_THRESH, LVH_L2_MALE_THRESH, N_LEADS, LEAD_TO_INDEX, ALL_LEADS, P_LEADS, PEAK_P_THRESH_II, PEAK_P_THRESH_V1, PEAK_R_THRESH, POS_QRS_THRESH, Q_AMP_THRESH, Q_DUR_THRESH, RHYTHM_LEADS, SARRH_THRESH, SIGNAL_LEN, LPR_THRESH, LQRS_THRESH, SPR_THRESH, STD_LEADS, STD_THRESH, STE_THRESH, T_LEADS, TACH_THRESH, VH_LEADS  # noqa: E501
-from src.basic.rule_ml import LT, And, Or, PipelineModule, StepModule, SeqSteps, Imply, GT, Not, ComparisonOp, get_agg_col_name
+from src.basic.constants import AGE_OLD_THRESH, AXIS_LEADS, BLOCK_LEADS, BRAD_THRESH, DEEP_S_THRESH, DOM_R_THRESH, \
+    DOM_S_THRESH, INVT_THRESH, LP_THRESH_II, LQRS_WPW_THRESH, LVH_L1_OLD_THRESH, LVH_L1_YOUNG_THRESH, \
+    LVH_L2_FEMALE_THRESH, LVH_L2_MALE_THRESH, N_LEADS, LEAD_TO_INDEX, ALL_LEADS, P_LEADS, PEAK_P_THRESH_II, \
+    PEAK_P_THRESH_V1, PEAK_R_THRESH, POS_QRS_THRESH, Q_AMP_THRESH, Q_DUR_THRESH, RHYTHM_LEADS, SARRH_THRESH, SIGNAL_LEN, \
+    LPR_THRESH, LQRS_THRESH, SPR_THRESH, STD_LEADS, STD_THRESH, STE_THRESH, T_LEADS, TACH_THRESH, VH_LEADS  # noqa: E501
+from src.basic.rule_ml import LT, And, Or, PipelineModule, StepModule, SeqSteps, Imply, GT, Not, ComparisonOp, \
+    get_agg_col_name
 from src.basic.dx_and_feat import Diagnosis, Feature, get_by_str
 
 
@@ -14,7 +19,6 @@ def calc_output_shape(length_in, kernel_size, stride=1, padding=0, dilation=1):
 
 
 class EcgStep(StepModule):
-
     focused_leads: list[str] = ALL_LEADS
     obj_feat_names: list[str] = []
     feat_imp_names: list[str] = []
@@ -366,8 +370,47 @@ class EcgEmbed(EcgStep):
         self.mid_output['embed'] = embed
 
 
-class RhythmModule(EcgStep):
+class AbstractModule(EcgStep):
+    focused_leads = []
+    obj_feat_names = []
+    feat_imp_names = []
+    comp_op_names = []
+    comp_thresh = []
+    imply_names = []
+    pred_dx_names = [('NORM', ['NORM_imp'])]
+    NORM_if_NOT = []
+    comp_ops = []
 
+    def __init__(self, step, all_mid_output: dict[str, dict[str, torch.Tensor]], hparams,
+                 is_using_hard_rule: bool = False):
+        super().__init__(self.module_name, all_mid_output, hparams, is_using_hard_rule)
+        self.focused_leads = step.focused_leads
+        self.obj_feat_names = step.obj_feats
+        for obj_feat in self.obj_feat_names:
+            self.feat_imp_names.append(obj_feat + "_imp")
+        self.comp_thresh = step.thresh
+        self.comp_op_names = step.comp_op
+        self.imply_names=step.implys
+
+        # Comparison operators
+        for i in range(len(self.comp_op_names)):
+            name = self.comp_op_names[i]
+            op = name[name.find("_") + 1:]
+            imp_name = name[:name.find("_")].upper()
+            thresh = self.comp_thresh[i]
+            if op == "lt":
+                setattr(self, name, LT(self, imp_name, thresh))
+            else:
+                setattr(self, name, GT(self, imp_name, thresh))
+
+        self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
+
+        for i in range(len(self.imply_names)):
+            name=self.imply_names[i]
+            setattr(self, name, Imply(self, self.get_imply_hparams(hparams,)))
+
+
+class RhythmModule(EcgStep):
     focused_leads: list[str] = RHYTHM_LEADS
     obj_feat_names: list[str] = ['BRAD', 'TACH']
     feat_imp_names: list[str] = ['BRAD_imp', 'TACH_imp']
@@ -457,7 +500,6 @@ class RhythmModule(EcgStep):
 
 
 class BlockModule(EcgStep):
-
     focused_leads: list[str] = BLOCK_LEADS
     obj_feat_names: list[str] = ['LPR', 'LQRS']
     feat_imp_names: list[str] = ['LPR_imp', 'LQRS_imp']
@@ -513,7 +555,6 @@ class BlockModule(EcgStep):
 
 
 class WPWModule(EcgStep):
-
     focused_leads: list[str] = ALL_LEADS
     obj_feat_names: list[str] = ['LQRS_WPW', 'SPR']
     feat_imp_names: list[str] = ['LQRS_WPW_imp', 'SPR_imp']
@@ -805,7 +846,6 @@ class QRModule(EcgStep):
 
 
 class PModule(EcgStep):
-
     focused_leads: list[str] = P_LEADS
     obj_feat_names: list[str] = ['LP_II', 'PEAK_P_II', 'PEAK_P_V1']
     feat_imp_names: list[str] = ['LP_II_imp', 'PEAK_P_II_imp', 'PEAK_P_V1_imp']
@@ -885,7 +925,6 @@ class PModule(EcgStep):
 
 
 class VHModule(EcgStep):
-
     focused_leads: list[str] = VH_LEADS
     obj_feat_names: list[str] = [
         'AGE_OLD', 'LVH_L1_OLD', 'LVH_L1_YOUNG', 'LVH_L2_MALE', 'LVH_L2_FEMALE', 'PEAK_R_V1', 'DEEP_S_V5', 'DEEP_S_V6',

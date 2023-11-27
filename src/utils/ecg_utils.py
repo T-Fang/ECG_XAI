@@ -24,6 +24,7 @@ def get_rpeaks(cleaned: NDArray[np.float32]) -> NDArray[np.int64]:
         The R peaks of the lead.
     """
     _, rpeaks_dict = nk.ecg_peaks(cleaned, sampling_rate=SAMPLING_RATE)
+    # print(rpeaks_dict['ECG_R_Peaks'])
     return rpeaks_dict['ECG_R_Peaks']
 
 
@@ -68,11 +69,15 @@ def get_delineation(cleaned: NDArray[np.float32], rpeaks: NDArray[np.int64], met
     """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
-        _, delineation = nk.ecg_delineate(cleaned, rpeaks, sampling_rate=SAMPLING_RATE, method=method)
+        # np.set_printoptions(threshold=np.inf)
+        # print(cleaned)
+        _, delineation = nk.ecg_delineate(ecg_cleaned=cleaned,rpeaks=rpeaks, sampling_rate=SAMPLING_RATE, method=method)
+
 
     for feat_name, feat_indices in delineation.items():
+        # print(feat_indices)
         delineation[feat_name] = np.array(feat_indices)
-
+    # print(delineation['ECG_Q_Peaks'])
     # Add rpeaks info to the delineation dict
     delineation['ECG_R_Peaks'] = rpeaks
     return delineation
@@ -103,6 +108,7 @@ def get_all_delineations(cleaned: NDArray[np.float32],
 
     all_delineations = []
     for i in range(cleaned.shape[0]):
+        # print(get_delineation(cleaned[i], all_rpeaks[i], method=method))
         all_delineations.append(get_delineation(cleaned[i], all_rpeaks[i], method=method))
 
     return all_delineations
