@@ -5,9 +5,17 @@ import pandas as pd
 
 # if __name__ == '__main__':
 def rm_main(data):
-    features = data.iloc[0]['features']
+    # features = data.data.loc[data['Name'] == 'Summary', 'feature'].values[0]
+    # midOutputs = data.iloc[0][]
+    features = []
+    midOutputs = []
+    for _,row in data.iterrows():
+        if row['Name'] != 'Summary':
+            features += ast.literal_eval(row['Required Features'])
+            midOutputs += ast.literal_eval(row['MidOutputs'])
+
+    features += midOutputs
     print(features)
-    features = ast.literal_eval(features)
     features.sort()
     # features = ["NORM", "AFIB", "AFLT", "SARRH", "SBRAD", "SR", "STACH", "AVB", "IVCD", "LAFB", "LBBB",
     #                         "LPFB", "RBBB", "WPW", "LAE", "LVH", "RAE", "RVH", "AMI", "IMI", "LMI"]
@@ -32,7 +40,7 @@ def rm_main(data):
         with open(file_name, "r") as file:
             content = file.read()
 
-        insert_position = content.find("class Diagnosis(Enum):")
+        insert_position = content.find("class Feature(Enum):")
         content = content[:insert_position] + feature_code[insert_position:]
         with open(file_name, "w") as file:
             file.write(content)

@@ -682,8 +682,12 @@ class STModule(EcgStep):
         imply_input = (focused_embed, decision_embed)
 
         # GOR_2(STE_II_imp, STE_III_imp, STE_aVF_imp) -> IMI_imp_STE
-        self.mid_output['IMI_imply_STE_atcd'] = self.GOR(
-            [self.mid_output['STE_II_imp'], self.mid_output['STE_III_imp'], self.mid_output['STE_aVF_imp']])
+        self.mid_output['IMI_imply_STE_atcd'] = (
+            self.GOR([
+                self.mid_output['STE_II_imp'],
+                self.mid_output['STE_III_imp'],
+                self.mid_output['STE_aVF_imp']
+            ]))
         self.IMI_imply_STE(imply_input)
 
         # (STE_V1_imp ∧ STE_V2_imp) ∨ (STE_V2_imp ∧ STE_V3_imp) ∨ ... ∨ (STE_V5_imp ∧ STE_V6_imp) -> AMI_imp_STE
@@ -697,10 +701,13 @@ class STModule(EcgStep):
         self.AMI_imply_STE(imply_input)
 
         # GOR_2(STE_I_imp, STE_aVL_imp, STE_V5_imp, STE_V6_imp) -> LMI_imp_STE
-        self.mid_output['LMI_imply_STE_atcd'] = self.GOR([
-            self.mid_output['STE_I_imp'], self.mid_output['STE_aVL_imp'], self.mid_output['STE_V5_imp'],
-            self.mid_output['STE_V6_imp']
-        ])
+        self.mid_output['LMI_imply_STE_atcd'] = (
+            self.GOR([
+                self.mid_output['STE_I_imp'],
+                self.mid_output['STE_aVL_imp'],
+                self.mid_output['STE_V5_imp'],
+                self.mid_output['STE_V6_imp']
+            ]))
         self.LMI_imply_STE(imply_input)
 
         # * Ancillary criteria
@@ -708,8 +715,12 @@ class STModule(EcgStep):
         self.IMI_imply_STD(imply_input)
 
         # GOR_2(STD_II_imp, STD_III_imp, STD_aVF_imp) -> AMI_imp_STD ∧ LMI_imp_STD
-        self.mid_output['AMI_LMI_imply_STD_atcd'] = self.GOR(
-            [self.mid_output['STD_II_imp'], self.mid_output['STD_III_imp'], self.mid_output['STD_aVF_imp']])
+        self.mid_output['AMI_LMI_imply_STD_atcd'] = (
+            self.GOR([
+                self.mid_output['STD_II_imp'],
+                self.mid_output['STD_III_imp'],
+                self.mid_output['STD_aVF_imp']
+                ]))
         self.AMI_LMI_imply_STD(imply_input)
 
         # STD_V5_imp ∨ STD_V6_imp -> LVH_imp_STD
