@@ -16,6 +16,7 @@ def rm_main(data):
 
     features += midOutputs
     print(features)
+    features=list(set(features))
     features.sort()
     # features = ["NORM", "AFIB", "AFLT", "SARRH", "SBRAD", "SR", "STACH", "AVB", "IVCD", "LAFB", "LBBB",
     #                         "LPFB", "RBBB", "WPW", "LAE", "LVH", "RAE", "RVH", "AMI", "IMI", "LMI"]
