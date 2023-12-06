@@ -370,46 +370,6 @@ class EcgEmbed(EcgStep):
         self.mid_output['embed'] = embed
 
 
-class AbstractModule(EcgStep):
-    focused_leads = []
-    obj_feat_names = []
-    feat_imp_names = []
-    comp_op_names = []
-    comp_thresh = []
-    imply_names = []
-    pred_dx_names = [('NORM', ['NORM_imp'])]
-    NORM_if_NOT = []
-    comp_ops = []
-
-    def __init__(self, step, all_mid_output: dict[str, dict[str, torch.Tensor]], hparams,
-                 is_using_hard_rule: bool = False):
-        super().__init__(self.module_name, all_mid_output, hparams, is_using_hard_rule)
-        self.focused_leads = step.focused_leads
-        self.obj_feat_names = step.obj_feats
-        for obj_feat in self.obj_feat_names:
-            self.feat_imp_names.append(obj_feat + "_imp")
-        self.comp_thresh = step.thresh
-        self.comp_op_names = step.comp_op
-        self.imply_names=step.implys
-
-        # Comparison operators
-        for i in range(len(self.comp_op_names)):
-            name = self.comp_op_names[i]
-            op = name[name.find("_") + 1:]
-            imp_name = name[:name.find("_")].upper()
-            thresh = self.comp_thresh[i]
-            if op == "lt":
-                setattr(self, name, LT(self, imp_name, thresh))
-            else:
-                setattr(self, name, GT(self, imp_name, thresh))
-
-        self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
-
-        for i in range(len(self.imply_names)):
-            name=self.imply_names[i]
-            setattr(self, name, Imply(self, self.get_imply_hparams(hparams,)))
-
-
 class RhythmModule(EcgStep):
     focused_leads: list[str] = RHYTHM_LEADS
     obj_feat_names: list[str] = ['BRAD', 'TACH']
