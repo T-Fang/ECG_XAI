@@ -6,7 +6,7 @@ import re
 
 # if __name__ == '__main__':
 def rm_main(data):
-    
+
     step2 = data.iloc[1]
     name = step2['Name']
     focused_leads = ast.literal_eval(step2['focused leads'])

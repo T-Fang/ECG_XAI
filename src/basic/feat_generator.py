@@ -10,9 +10,8 @@ def rm_main(data):
     features = []
     midOutputs = []
     for _,row in data.iterrows():
-        if row['Name'] != 'Summary':
-            features += ast.literal_eval(row['Required Features'])
-            midOutputs += ast.literal_eval(row['obj_feat_names'])
+        features += ast.literal_eval(row['Required Features'])
+        midOutputs += ast.literal_eval(row['obj_feat_names'])
 
     features += midOutputs
     print(features)

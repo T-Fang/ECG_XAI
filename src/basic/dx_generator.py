@@ -5,10 +5,15 @@ import pandas as pd
 
 # if __name__ == '__main__':
 def rm_main(data):
-    additional_diagnoses = data.loc[data['Name'] == 'Summary', 'diagnosis'].values[0]
-    print(additional_diagnoses)
-    additional_diagnoses = ast.literal_eval(additional_diagnoses)
+
+    additional_diagnoses = []
+    for _,row in data.iterrows():
+        additional_diagnoses += ast.literal_eval(row['diagnosis'])
+
+    additional_diagnoses = list(set(additional_diagnoses))
     additional_diagnoses.sort()
+    print(additional_diagnoses)
+
     # additional_diagnoses = ["NORM", "AFIB", "AFLT", "SARRH", "SBRAD", "SR", "STACH", "AVB", "IVCD", "LAFB", "LBBB",
     #                         "LPFB", "RBBB", "WPW", "LAE", "LVH", "RAE", "RVH", "AMI", "IMI", "LMI"]
     diagnosis_code = '''import torch\nimport pandas as pd\nfrom enum import Enum\nclass Diagnosis(Enum):\n'''

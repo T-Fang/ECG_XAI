@@ -1,3 +1,5 @@
+import ast
+
 import torch
 import torch.nn as nn
 import pandas as pd
@@ -368,6 +370,72 @@ class EcgEmbed(EcgStep):
 
         embed = torch.stack(lead_embeds, dim=1)
         self.mid_output['embed'] = embed
+
+
+
+class EcgModule(EcgStep):
+    focused_leads=[]
+    obj_feat_names=[]
+    thresholds=[]
+    feat_imp_names=[]
+    comp_op_names=[]
+    norm_if_not=[]
+    traces=[]
+    operations=[]
+    required_features=[]
+    result_outputs=[]
+    imply_names = []
+    pred_dx_names = []
+    def __init__(self,data, all_mid_output: dict[str, dict[str, torch.Tensor]], hparams, is_using_hard_rule: bool = False):
+        super().__init__(self.module_name, all_mid_output, hparams, is_using_hard_rule)
+
+        self.focused_leads = ast.literal_eval(data['focused leads'])
+        self.obj_feat_names = ast.literal_eval(data['obj_feat_names'])
+        self.feat_imp_names = [x + '_imp' for x in self.obj_feat_names]
+        self.thresholds = ast.literal_eval(data['thresholds'])
+        self.comp_op_names = ast.literal_eval(data['comp_op_names'])
+        self.imply_names = [x + '_imply' for x in self.result_outputs]
+        self.pred_dx_names = [('NORM', ['NORM_imp'])] + [(x, [x + '_imp']) for x in self.result_outputs]
+        self.norm_if_not = ast.literal_eval(data['NORM_if_NOT'])
+        self.traces = ast.literal_eval(data['traces'])
+        self.operations = ast.literal_eval(data['Operations'])
+        self.required_features = ast.literal_eval(data['Required Features'])
+        self.result_outputs = ast.literal_eval(data['ResultOutputs'])
+
+        for key, value in self.thresholds.items():
+            self.thresholds[key] = int(''.join(filter(str.isdigit, value)))
+
+        #Comparison operators
+        for i in range(len(self.obj_feat_names)):
+            if self.comp_op_names[i][-2:] == 'lt':
+                setattr(self,self.comp_op_names[i],LT(self, self.obj_feat_names[i], self.thresholds[self.obj_feat_names[i]]))
+            else:
+                setattr(self,self.comp_op_names[i],GT(self, self.obj_feat_names[i], self.thresholds[self.obj_feat_names[i]]))
+
+        #Imply
+        if not self.use_lattice:
+            self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
+        for i in range(len(self.result_outputs)):
+            setattr(self,self.imply_names[i],Imply(self, self.get_imply_hparams(hparams, self.traces[i][:-len(self.result_outputs[i])]+"_imp", [self.result_outputs[i]+'_imp'], True)))
+
+
+    def apply_rule(self, x) -> None:
+        batched_ecg, batched_obj_feat = x
+        for i in range(len(self.obj_feat_names)):
+            self.comp_op_names[i](get_by_str(batched_obj_feat, [self.required_features[i]], Feature))
+
+        focused_embed = self.get_focused_embed()
+        decision_embed = None if self.use_lattice else self.imply_decision_embed_layer(focused_embed)
+        imply_input = (focused_embed, decision_embed)
+        for i in range(len(self.result_outputs)):
+            getattr(self,self.imply_names[i])(imply_input)
+
+    def add_explanation(self, mid_output_agg: pd.Series, report_file_obj):
+        report_file_obj.write(f'## Step {self.module_name}: {self.module_name}\n')
+        for i in range(len(self.result_outputs)):
+            self.add_imply_exp(mid_output_agg, report_file_obj, self.traces[i], '', self.result_outputs[i]+'_imp')
+        for i in range(len(self.obj_feat_names)):
+            self.add_comp_exp(mid_output_agg, report_file_obj, self.comp_op_names[i])
 
 
 class RhythmModule(EcgStep):
