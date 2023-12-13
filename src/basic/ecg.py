@@ -11,12 +11,12 @@ from numpy.typing import NDArray
 from neurokit2.signal import signal_rate
 
 from src.basic.rule_ml import Signal
-from src.basic.dx_and_feat import Diagnosis, keys_to_vector, get_feat_vector
+from src.basic.dx_and_feat import Diagnosis, keys_to_vector, get_feat_vector, Feature
 from src.basic.constants import AGE_OLD_THRESH, LVH_L1_OLD_THRESH, LVH_L1_YOUNG_THRESH, LVH_L2_FEMALE_THRESH, LVH_L2_MALE_THRESH, MS_PER_INDEX, P_LEADS, PRWP_LEADS, SAMPLING_RATE, LEAD_TO_INDEX, N_LEADS, ALL_LEADS, DURATION, T_LEADS  # noqa: E501
 from src.utils.ecg_utils import get_all_rpeaks, get_all_delineations, custom_ecg_delineate_plot, check_inverted_wave, check_all_inverted_waves  # noqa: E501
 from src.basic.cardiac_cycle import CardiacCycle, get_all_cycles
 
-VERBOSE = False  # for debugging purpose only
+VERBOSE = True  # for debugging purpose only
 
 
 class Ecg(Signal):
@@ -41,6 +41,9 @@ class Ecg(Signal):
 
     def get_feat(self):
         return get_feat_vector(self)
+
+    def get_feat_with_name(self):
+        return {feat.name: getattr(self, feat.name) for feat in Feature}
 
     def get_diagnoses(self):
         return self.diagnoses

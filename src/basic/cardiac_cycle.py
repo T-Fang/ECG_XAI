@@ -105,8 +105,8 @@ class CardiacCycle():
         """
 
         def calc_Q_offset():
-            print("Q",self.Q_peak)
-            print("R",self.R_peak)
+            # print("Q",self.Q_peak)
+            # print("R",self.R_peak)
             if self.signal[self.Q_peak] > 0 or self.signal[self.R_peak] < 0:
                 return None
             if self.signal[self.Q_peak] == 0:

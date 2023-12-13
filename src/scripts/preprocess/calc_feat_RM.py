@@ -9,14 +9,14 @@ from src.utils.data_utils import EcgDataModule  # noqa: E402
 
 # if __name__ == '__main__':
 def rm_main(data):
-    # data = {'features': [
-    #     ['SINUS', 'HR', 'RR_DIFF', 'QRS_DUR', 'PR_DUR', 'ST_AMP', 'Q_DUR', 'Q_AMP', 'PRWP', 'P_DUR', 'P_AMP', 'AGE',
-    #      'MALE', 'R_AMP', 'S_AMP', 'RS_RATIO', 'RAD', 'T_AMP', 'QRS_SUM']]}
-    # df = pd.DataFrame(data)
+#     data = {'features': [
+#         ['SINUS', 'HR', 'RR_DIFF', 'QRS_DUR', 'PR_DUR', 'ST_AMP', 'Q_DUR', 'Q_AMP', 'PRWP', 'P_DUR', 'P_AMP', 'AGE',
+#          'MALE', 'R_AMP', 'S_AMP', 'RS_RATIO', 'RAD', 'T_AMP', 'QRS_SUM']]}
+#     data = pd.DataFrame(data)
 
     # 提取 features 列的元素
     features = data.iloc[0]['features']
-    print(features)
+    # print(features)
     features = ast.literal_eval(features)
     features.sort()
     for i in range(len(features)):

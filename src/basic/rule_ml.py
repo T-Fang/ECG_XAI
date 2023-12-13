@@ -39,6 +39,9 @@ class Signal:
     def calc_feat(self):
         raise NotImplementedError
 
+    def calc_feat_NEW(self):
+        raise NotImplementedError
+
 
 class SignalDataset(Dataset):
 
@@ -54,6 +57,10 @@ class SignalDataset(Dataset):
     def calc_feat(self):
         for signal in self.signals:
             signal.calc_feat()
+
+    def calc_feat_NEW(self,feat_list):
+        for signal in self.signals:
+            signal.calc_feat_NEW(feat_list)
 
     def count_diagnoses(self):
         all_diagnoses = [signal.get_diagnoses() for signal in self.signals]

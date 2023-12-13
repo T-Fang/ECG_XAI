@@ -263,18 +263,36 @@ class EcgDataModule(SignalDataModule):
         database = load_database(self.hparams.data_dir)
         X = load_corresponding_ecg(database, self.hparams.data_dir)
 
+        sampled_indices = np.random.choice(len(database), size=len(database) // 1000, replace=False)
+
+        sampled_database = database.iloc[sampled_indices]
+        sampled_X = X[sampled_indices]
+
         # train-val-test split: 60-20-20
         # Train
-        train_mask = database.strat_fold.isin(TRAIN_FOLDS)
-        train_ds = EcgDataset('train', X[train_mask], database[train_mask])
+
+        train_mask = sampled_database.strat_fold.isin(TRAIN_FOLDS)
+        train_ds = EcgDataset('train', sampled_X[train_mask], sampled_database[train_mask])
 
         # Validation
-        val_mask = database.strat_fold.isin(VAL_FOLDS)
-        val_ds = EcgDataset('val', X[val_mask], database[val_mask])
+        val_mask = sampled_database.strat_fold.isin(VAL_FOLDS)
+        val_ds = EcgDataset('val', sampled_X[val_mask], sampled_database[val_mask])
 
         # Test
-        test_mask = database.strat_fold.isin(TEST_FOLDS)
-        test_ds = EcgDataset('test', X[test_mask], database[test_mask])
+        test_mask = sampled_database.strat_fold.isin(TEST_FOLDS)
+        test_ds = EcgDataset('test', sampled_X[test_mask], sampled_database[test_mask])
+
+
+        # train_mask = database.strat_fold.isin(TRAIN_FOLDS)
+        # train_ds = EcgDataset('train', X[train_mask], database[train_mask])
+        #
+        # # Validation
+        # val_mask = database.strat_fold.isin(VAL_FOLDS)
+        # val_ds = EcgDataset('val', X[val_mask], database[val_mask])
+        #
+        # # Test
+        # test_mask = database.strat_fold.isin(TEST_FOLDS)
+        # test_ds = EcgDataset('test', X[test_mask], database[test_mask])
 
         return train_ds, val_ds, test_ds
 
