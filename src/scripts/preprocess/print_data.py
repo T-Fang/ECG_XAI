@@ -15,6 +15,7 @@ def rm_main():
     # print(train_signals[0].get_feat_with_name())
     df= pd.DataFrame(columns=[feat.name for feat in Feature])
     for signal in train_signals:
+        signal.show_with_grid()
         feat_dict = signal.get_feat_with_name()
         df.loc[len(df)]=feat_dict
 
