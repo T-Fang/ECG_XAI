@@ -382,7 +382,7 @@ class EcgModule(EcgStep):
     comp_op_names = []
     norm_if_not = []
     traces = []
-    operations = []
+    operations = {}
     required_features = []
     result_outputs = []
     imply_names = []
@@ -390,8 +390,8 @@ class EcgModule(EcgStep):
 
     def __init__(self, data, all_mid_output: dict[str, dict[str, torch.Tensor]], hparams,
                  is_using_hard_rule: bool = False):
-        super().__init__(self.module_name, all_mid_output, hparams, is_using_hard_rule)
-
+        super().__init__(data['Name'], all_mid_output, hparams, is_using_hard_rule)
+        self.name = data['Name']
         self.focused_leads = ast.literal_eval(data['focused leads'])
 
         self.obj_feat_names = ast.literal_eval(data['obj_feat_names'])
@@ -410,14 +410,14 @@ class EcgModule(EcgStep):
         self.norm_if_not = ast.literal_eval(data['NORM_if_NOT'])
 
         self.traces = ast.literal_eval(data['traces'])
-        self.traces=[row.replace("AND", "&") for row in self.traces]
+        self.traces = [row.replace("AND", "&") for row in self.traces]
         self.traces = [row.replace("and", "&") for row in self.traces]
-        self.traces=[row.replace("OR", "|") for row in self.traces]
+        self.traces = [row.replace("OR", "|") for row in self.traces]
         self.traces = [row.replace("or", "|") for row in self.traces]
-        self.traces=[row.replace("NOT", "~") for row in self.traces]
+        self.traces = [row.replace("NOT", "~") for row in self.traces]
         self.traces = [row.replace("not", "~") for row in self.traces]
 
-        expression= [parse_expr(row[:row.find('->')-1]).simplify() for row in self.traces]
+        expression = [parse_expr(row[:row.find('->') - 1]).simplify() for row in self.traces]
         self.traces = {self.traces[i][self.traces[i].find('->') + 3:]: str(expression[i]) for i in
                        range(len(self.traces))}
         temp_traces = {}
@@ -472,24 +472,72 @@ class EcgModule(EcgStep):
         for i in range(len(self.comp_op_names)):
             comp_op_name = self.comp_op_names[i]
             object_name = comp_op_name[:-3]
-            getattr(self, comp_op_name)(get_by_str(batched_obj_feat, [self.operations[object_name]], Feature))
+            operation = self.operations[object_name]
+            operation = operation[:operation.find(self.thresholds[object_name]) - 3]
+            features = re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', operation)
+            for feature in features:
+                if '_' in feature:
+                    parts = feature.split('_')
+                    if len(parts == 2) and parts[1] not in ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3',
+                                                            'V4', 'V5', 'V6']:
+                        module_name = parts[1]
+                        self.mid_output[feature] = self.all_mid_output[module_name][parts[0]]
+                    else:
+                        if len(parts) == 3:
+                            if parts[1] in ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']:
+                                module_name = parts[2]
+                                self.mid_output[feature] = self.all_mid_output[module_name][parts[0]] + [parts[1]]
+                            else:
+                                module_name = parts[1]
+                                self.mid_output[feature] = self.all_mid_output[module_name][parts[0] + [parts[2]]]
+
+                operation = operation.replace(feature, '{' + feature + '}')
+                if feature in self.all_mid_output.keys():
+                    self.mid_output[feature] = self.all_mid_output[feature]
+                    continue
+                else:
+                    if feature in self.mid_output.keys():
+                        continue
+                    else:
+                        setattr(self, feature, get_by_str(batched_obj_feat, [feature], Feature))
+                        self.mid_output[feature] = get_by_str(batched_obj_feat, [feature], Feature)
+            getattr(self, comp_op_name)(eval(operation.format(**self.mid_output)))
 
         focused_embed = self.get_focused_embed()
         decision_embed = None if self.use_lattice else self.imply_decision_embed_layer(focused_embed)
         imply_input = (focused_embed, decision_embed)
 
-        #imply
-        # self.mid_output['WPW_imply_atcd'] = self.AND([
-        #     self.mid_output['LQRS_WPW_imp'],
-        #     self.NOT(self.all_mid_output[BlockModule.__name__]['LBBB_imp_Block']),
-        #     self.NOT(self.all_mid_output[BlockModule.__name__]['RBBB_imp_Block']),
-        #     self.mid_output['SPR_imp']
-        # ])
-        # self.WPW_imply(imply_input)
-        
+        # imply
+        def to_prefix(expr):
+            if type(expr) is And:
+                return 'self.AND([' + ', '.join(to_prefix(arg) for arg in expr.args) + '])'
+            elif type(expr) is Or:
+                return 'self.OR([' + ', '.join(to_prefix(arg) for arg in expr.args) + '])'
+            elif type(expr) is Not:
+                return 'self.NOT([' + to_prefix(expr.args[0]) + '])'
+            else:
+                return str(expr)
 
+        for result_name, trace in self.traces.items():
+            features = re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', trace)
+            exp_trace = parse_expr(trace)
+            exp_trace = to_prefix(exp_trace)
+            for feature in features:
+                exp_trace.replace(feature, 'self.mid_output[' + feature + ']')
+            self.mid_output[result_name + '_imply_atcd'] = eval(exp_trace)
+            getattr(self, result_name + '_imply')(imply_input)
 
     def add_explanation(self, mid_output_agg: pd.Series, report_file_obj):
+        report_file_obj.write(f'### {self.name}\n')
+        for result_name, trace in self.traces.items():
+            features = re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', trace)
+            for feature in features:
+                operation_names = self.operations.keys()
+                if feature in operation_names:
+                    self.add_comp_exp(mid_output_agg, report_file_obj, feature + '_imp')
+                    operation_names.remove(feature)
+            self.add_imply_exp(mid_output_agg, report_file_obj, trace, result_name + '_imply' + '_atcd',
+                               result_name + '_imply')
 
 
 class RhythmModule(EcgStep):
@@ -678,7 +726,8 @@ class WPWModule(EcgStep):
         self.mid_output['WPW_imply_atcd'] = self.AND([
             self.mid_output['LQRS_WPW_imp'],
             self.NOT(self.all_mid_output[BlockModule.__name__]['LBBB_imp_Block']),
-            self.NOT(self.all_mid_output[BlockModule.__name__]['RBBB_imp_Block']), self.mid_output['SPR_imp']
+            self.NOT(self.all_mid_output[BlockModule.__name__]['RBBB_imp_Block']),
+            self.mid_output['SPR_imp']
         ])
         self.WPW_imply(imply_input)
 
@@ -1096,12 +1145,13 @@ class VHModule(EcgStep):
         imply_input = (focused_embed, decision_embed)
 
         # (AGE_OLD_imp ∧ LVH_L1_OLD_imp) ∨ (~AGE_OLD_imp ∧ LVH_L1_YOUNG_imp) ∨ (MALE ∧ LVH_L2_MALE_imp) ∨ (~MALE ∧ LVH_L2_FEMALE_imp) -> LVH_imp_VH
-        self.mid_output['LVH_imply_VH_atcd'] = self.OR([
-            self.AND([self.mid_output['AGE_OLD_imp'], self.mid_output['LVH_L1_OLD_imp']]),
-            self.AND([self.NOT(self.mid_output['AGE_OLD_imp']), self.mid_output['LVH_L1_YOUNG_imp']]),
-            self.AND([MALE, self.mid_output['LVH_L2_MALE_imp']]),
-            self.AND([self.NOT(MALE), self.mid_output['LVH_L2_FEMALE_imp']]),
-        ])
+        self.mid_output['LVH_imply_VH_atcd'] = (
+            self.OR([
+                self.AND([self.mid_output['AGE_OLD_imp'], self.mid_output['LVH_L1_OLD_imp']]),
+                self.AND([self.NOT(self.mid_output['AGE_OLD_imp']), self.mid_output['LVH_L1_YOUNG_imp']]),
+                self.AND([MALE, self.mid_output['LVH_L2_MALE_imp']]),
+                self.AND([self.NOT(MALE), self.mid_output['LVH_L2_FEMALE_imp']]),
+            ]))
         self.LVH_imply_VH(imply_input)
 
         # GOR_2(PEAK_R_V1_imp, DEEP_S_V5_imp ∨ DEEP_S_V6_imp, DOM_R_V1_imp, DOM_S_V5_imp ∨ DOM_S_V6_imp, RAD) -> RVH_imp_VH
