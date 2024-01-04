@@ -19,7 +19,9 @@ class EcgDataset(SignalDataset):
         self.signals: list[Ecg] = []
         self.is_ecg_used: list[bool] = []
         for i in range(len(self.raw_recordings)):
-            print('****************************************\n** processing ecg', i, 'of', len(self.raw_recordings), '**')
+            # if i % 100 == 0:
+            print('****************************************\n** processing ecg', i, 'of', len(self.raw_recordings),
+                  '**')
             ecg = Ecg(self.raw_recordings[i], self.database_df.iloc[i])
             self.is_ecg_used.append(ecg.is_used)
             if ecg.is_used:

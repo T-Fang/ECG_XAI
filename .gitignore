@@ -2,7 +2,7 @@
 .vscode/
 ._*
 __pycache__/
-data/processed/
+data/
 logs/**
 !logs/best/**
 .nfs*

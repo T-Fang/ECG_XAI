@@ -15,3 +15,33 @@ Cardiovascular disease (CVD) is a primary cause of mortality globally, and the e
 **Keywords**: Explainable Artificial Intelligence, First-order Logic, Electrocardiogram
 
 **Implementation Software**: Pytorch 2.0, Pytorch Lighting 1.9.4, NeuroKit2 0.2.3, Optuna 3.2
+
+
+
+```
+|-ECG_XAI
+	|-config
+	|-data
+	|-scheduler
+	|-src
+		|-basic
+			|-cardiac_cycle.py
+			|-constants.py
+			|-dx_and_feat.py
+			|-ecg.py
+			|-ecg_dataset.py
+			|-rule_ml.py
+		|-models
+			|-ecg_step_module.py
+		|-scripts
+			|-preprocess
+				|-preprocess_data.py
+			|-test
+				|-test_best.py
+			|-train
+				|-basic_cnn.py
+				|-hard_rule.py
+				|-soft_rule_mpav.py
+		|-utils
+```
+

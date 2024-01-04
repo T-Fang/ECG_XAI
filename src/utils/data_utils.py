@@ -87,12 +87,21 @@ class SignalDataModule(pl.LightningDataModule):
         if not os.path.exists(self.hparams.processed_dir):
             os.makedirs(self.hparams.processed_dir)
 
+    def preprocess_data(self):
+        # load preprocessed dataset [get_cycle,delineated] without calc features
+        self.load_processed_ds()
+
+    def calc_feat_data(self,feat_list):
+        if not self.ds_path_exists('train', with_feat=True):
+            self.load_ds_with_feat_NEW(feat_list,re_calc_feat=self.hparams.re_calc_feat)
+
     def prepare_data(self):
         # download, etc.
 
         # Make sure relevant dataset files exists
         if not self.ds_path_exists('train', with_feat=True):
             self.load_ds_with_feat(re_calc_feat=self.hparams.re_calc_feat)
+
 
     def setup(self, stage: str):
         if stage == "fit":
@@ -166,6 +175,20 @@ class SignalDataModule(pl.LightningDataModule):
             test_ds = pickle.load(open(os.path.join(self.hparams.processed_dir, 'test_ds.pickle'), "rb"))
         return train_ds, val_ds, test_ds
 
+    def load_processed_ds_NEW(self):
+        """
+        Load all processed datasets.
+        If the corresponding dataset files do not exist, process the datasets and save them to disk.
+        """
+        if not self.ds_path_exists('train', with_feat=False):
+            print('Datasets not processed')
+            exit(0)
+        else:
+            train_ds = pickle.load(open(os.path.join(self.hparams.processed_dir, 'train_ds.pickle'), "rb"))
+            val_ds = pickle.load(open(os.path.join(self.hparams.processed_dir, 'val_ds.pickle'), "rb"))
+            test_ds = pickle.load(open(os.path.join(self.hparams.processed_dir, 'test_ds.pickle'), "rb"))
+        return train_ds, val_ds, test_ds
+
     def load_ds_with_feat(self, re_calc_feat: bool = False):
         """
         Load all processed datasets with features.
@@ -180,6 +203,27 @@ class SignalDataModule(pl.LightningDataModule):
             train_ds.calc_feat()
             val_ds.calc_feat()
             test_ds.calc_feat()
+            self.save_datasets(train_ds, val_ds, test_ds, postfix='_with_feat')
+        else:
+            train_ds = pickle.load(open(os.path.join(self.hparams.processed_dir, 'train_ds_with_feat.pickle'), "rb"))
+            val_ds = pickle.load(open(os.path.join(self.hparams.processed_dir, 'val_ds_with_feat.pickle'), "rb"))
+            test_ds = pickle.load(open(os.path.join(self.hparams.processed_dir, 'test_ds_with_feat.pickle'), "rb"))
+        return train_ds, val_ds, test_ds
+
+    def load_ds_with_feat_NEW(self,feat_list, re_calc_feat: bool = False):
+        """
+        Load all processed datasets with features.
+
+        If the corresponding dataset files do not exist,
+        calculate features of each instances in the datasets and save them to disk.
+        """
+        if re_calc_feat or not self.ds_path_exists('train', with_feat=True):
+            print('Loading datasets without features...')
+            train_ds, val_ds, test_ds = self.load_processed_ds_NEW()
+            print('Calculating features...')
+            train_ds.calc_feat_NEW(feat_list)
+            val_ds.calc_feat_NEW(feat_list)
+            test_ds.calc_feat_NEW(feat_list)
             self.save_datasets(train_ds, val_ds, test_ds, postfix='_with_feat')
         else:
             train_ds = pickle.load(open(os.path.join(self.hparams.processed_dir, 'train_ds_with_feat.pickle'), "rb"))
@@ -214,21 +258,41 @@ class EcgDataModule(SignalDataModule):
                  pin_memory: bool = True):
         super().__init__(data_dir, processed_dir, re_calc_feat, batch_size, num_workers, pin_memory)
 
+
     def load_ds_from_raw(self):
         database = load_database(self.hparams.data_dir)
         X = load_corresponding_ecg(database, self.hparams.data_dir)
 
+        sampled_indices = np.random.choice(len(database), size=len(database) // 1000, replace=False)
+
+        sampled_database = database.iloc[sampled_indices]
+        sampled_X = X[sampled_indices]
+
         # train-val-test split: 60-20-20
         # Train
-        train_mask = database.strat_fold.isin(TRAIN_FOLDS)
-        train_ds = EcgDataset('train', X[train_mask], database[train_mask])
+
+        train_mask = sampled_database.strat_fold.isin(TRAIN_FOLDS)
+        train_ds = EcgDataset('train', sampled_X[train_mask], sampled_database[train_mask])
 
         # Validation
-        val_mask = database.strat_fold.isin(VAL_FOLDS)
-        val_ds = EcgDataset('val', X[val_mask], database[val_mask])
+        val_mask = sampled_database.strat_fold.isin(VAL_FOLDS)
+        val_ds = EcgDataset('val', sampled_X[val_mask], sampled_database[val_mask])
 
         # Test
-        test_mask = database.strat_fold.isin(TEST_FOLDS)
-        test_ds = EcgDataset('test', X[test_mask], database[test_mask])
+        test_mask = sampled_database.strat_fold.isin(TEST_FOLDS)
+        test_ds = EcgDataset('test', sampled_X[test_mask], sampled_database[test_mask])
+
+
+        # train_mask = database.strat_fold.isin(TRAIN_FOLDS)
+        # train_ds = EcgDataset('train', X[train_mask], database[train_mask])
+        #
+        # # Validation
+        # val_mask = database.strat_fold.isin(VAL_FOLDS)
+        # val_ds = EcgDataset('val', X[val_mask], database[val_mask])
+        #
+        # # Test
+        # test_mask = database.strat_fold.isin(TEST_FOLDS)
+        # test_ds = EcgDataset('test', X[test_mask], database[test_mask])
 
         return train_ds, val_ds, test_ds
+

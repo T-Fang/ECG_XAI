@@ -1,8 +1,17 @@
+import ast
+
 import torch
 import torch.nn as nn
 import pandas as pd
-from src.basic.constants import AGE_OLD_THRESH, AXIS_LEADS, BLOCK_LEADS, BRAD_THRESH, DEEP_S_THRESH, DOM_R_THRESH, DOM_S_THRESH, INVT_THRESH, LP_THRESH_II, LQRS_WPW_THRESH, LVH_L1_OLD_THRESH, LVH_L1_YOUNG_THRESH, LVH_L2_FEMALE_THRESH, LVH_L2_MALE_THRESH, N_LEADS, LEAD_TO_INDEX, ALL_LEADS, P_LEADS, PEAK_P_THRESH_II, PEAK_P_THRESH_V1, PEAK_R_THRESH, POS_QRS_THRESH, Q_AMP_THRESH, Q_DUR_THRESH, RHYTHM_LEADS, SARRH_THRESH, SIGNAL_LEN, LPR_THRESH, LQRS_THRESH, SPR_THRESH, STD_LEADS, STD_THRESH, STE_THRESH, T_LEADS, TACH_THRESH, VH_LEADS  # noqa: E501
-from src.basic.rule_ml import LT, And, Or, PipelineModule, StepModule, SeqSteps, Imply, GT, Not, ComparisonOp, get_agg_col_name
+import re
+from sympy import *
+from src.basic.constants import AGE_OLD_THRESH, AXIS_LEADS, BLOCK_LEADS, BRAD_THRESH, DEEP_S_THRESH, DOM_R_THRESH, \
+    DOM_S_THRESH, INVT_THRESH, LP_THRESH_II, LQRS_WPW_THRESH, LVH_L1_OLD_THRESH, LVH_L1_YOUNG_THRESH, \
+    LVH_L2_FEMALE_THRESH, LVH_L2_MALE_THRESH, N_LEADS, LEAD_TO_INDEX, ALL_LEADS, P_LEADS, PEAK_P_THRESH_II, \
+    PEAK_P_THRESH_V1, PEAK_R_THRESH, POS_QRS_THRESH, Q_AMP_THRESH, Q_DUR_THRESH, RHYTHM_LEADS, SARRH_THRESH, SIGNAL_LEN, \
+    LPR_THRESH, LQRS_THRESH, SPR_THRESH, STD_LEADS, STD_THRESH, STE_THRESH, T_LEADS, TACH_THRESH, VH_LEADS  # noqa: E501
+from src.basic.rule_ml import LT, And, Or, PipelineModule, StepModule, SeqSteps, Imply, GT, Not, ComparisonOp, \
+    get_agg_col_name
 from src.basic.dx_and_feat import Diagnosis, Feature, get_by_str
 
 
@@ -14,7 +23,6 @@ def calc_output_shape(length_in, kernel_size, stride=1, padding=0, dilation=1):
 
 
 class EcgStep(StepModule):
-
     focused_leads: list[str] = ALL_LEADS
     obj_feat_names: list[str] = []
     feat_imp_names: list[str] = []
@@ -202,14 +210,14 @@ class EcgStep(StepModule):
     def extra_terms_to_log(self) -> list[tuple[str, str]]:
         # log delta, w
         return [(self.module_name, f'{comp_op_name}_delta') for comp_op_name in self.comp_op_names] + \
-               [(self.module_name, f'{comp_op_name}_w') for comp_op_name in self.comp_op_names]
+            [(self.module_name, f'{comp_op_name}_w') for comp_op_name in self.comp_op_names]
         #    [(self.module_name, f'{imply_name}_rho') for imply_name in self.imply_names]
 
     @property
     def mid_output_to_agg(self) -> list[tuple[str, str]]:
         # aggregating feature impressions and extra terms such as 'NORM_imp' and Imply's antecedents
         return [(self.module_name, feat_imp_name) for feat_imp_name in self.feat_imp_names] + \
-               [(self.module_name, extra_term_name) for extra_term_name in self.extra_terms_to_agg]
+            [(self.module_name, extra_term_name) for extra_term_name in self.extra_terms_to_agg]
 
     @property
     def compared_agg(self) -> list[tuple[str]]:
@@ -366,8 +374,173 @@ class EcgEmbed(EcgStep):
         self.mid_output['embed'] = embed
 
 
-class RhythmModule(EcgStep):
+class EcgModule(EcgStep):
+    focused_leads = []
+    obj_feat_names = []
+    thresholds = {}
+    feat_imp_names = []
+    comp_op_names = []
+    norm_if_not = []
+    traces = []
+    operations = {}
+    required_features = []
+    result_outputs = []
+    imply_names = []
+    pred_dx_names = []
 
+    def __init__(self, data, all_mid_output: dict[str, dict[str, torch.Tensor]], hparams,
+                 is_using_hard_rule: bool = False):
+        super().__init__(data['Name'], all_mid_output, hparams, is_using_hard_rule)
+        self.name = data['Name']
+        self.focused_leads = ast.literal_eval(data['focused leads'])
+
+        self.obj_feat_names = ast.literal_eval(data['obj_feat_names'])
+        self.feat_imp_names = [x + '_imp' for x in self.obj_feat_names]
+
+        self.thresholds = ast.literal_eval(data['thresholds'])
+        for key, value in self.thresholds:
+            self.thresholds[key] = int(''.join(filter(str.isdigit, value)))
+
+        self.comp_op_names = ast.literal_eval(data['comp_op_names'])
+
+        self.result_outputs = ast.literal_eval(data['ResultOutputs'])
+        self.imply_names = [x + '_imply' for x in self.result_outputs]
+
+        self.pred_dx_names = [('NORM', ['NORM_imp'])] + [(x, [x + '_imp']) for x in self.result_outputs]
+        self.norm_if_not = ast.literal_eval(data['NORM_if_NOT'])
+
+        self.traces = ast.literal_eval(data['traces'])
+        self.traces = [row.replace("AND", "&") for row in self.traces]
+        self.traces = [row.replace("and", "&") for row in self.traces]
+        self.traces = [row.replace("OR", "|") for row in self.traces]
+        self.traces = [row.replace("or", "|") for row in self.traces]
+        self.traces = [row.replace("NOT", "~") for row in self.traces]
+        self.traces = [row.replace("not", "~") for row in self.traces]
+
+        expression = [parse_expr(row[:row.find('->') - 1]).simplify() for row in self.traces]
+        self.traces = {self.traces[i][self.traces[i].find('->') + 3:]: str(expression[i]) for i in
+                       range(len(self.traces))}
+        temp_traces = {}
+        value2key = {}
+        for key, value in self.traces.items():
+            if value in value2key:
+                new_key = value2key[value] + "&" + key + "_Block"
+                temp_traces[new_key] = value
+                temp_traces.pop(value2key[value])
+                self.pred_dx_names.remove((value, [value + '_imp']))
+                self.pred_dx_names.remove((key, [key + '_imp']))
+                self.pred_dx_names.append((key, [key + '_imp' + "_Block"]))
+                self.pred_dx_names.append((value, [new_key + '_imp' + "_Block"]))
+                self.imply_names.remove(value + '_imply')
+                self.imply_names.remove(key + '_imply')
+                self.imply_names.append(new_key + '_imply')
+            else:
+                value2key[value] = key
+                temp_traces[key] = value
+        self.traces = temp_traces
+
+        self.operations = ast.literal_eval(data['Operations'])
+        self.required_features = ast.literal_eval(data['Required Features'])
+
+        for key, value in self.thresholds.items():
+            self.thresholds[key] = int(''.join(filter(str.isdigit, value)))
+
+        # Comparison operators
+        for i in range(len(self.comp_op_names)):
+            comp_op_name = self.comp_op_names[i]
+            object_name = comp_op_name[:-3]
+            object_imp = object_name + '_imp'
+            threshold = self.thresholds[object_name]
+            if comp_op_name[-2:] == 'lt':
+                setattr(self, comp_op_name, LT(self, object_imp, threshold))
+            else:
+                setattr(self, comp_op_name, GT(self, object_imp, threshold))
+
+        # Imply
+        if not self.use_lattice:
+            self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
+        for result_name, _ in self.traces:
+            consequents = result_name.replace("_Block", "").split("&")
+            consequents = [x + "_imp" for x in consequents]
+            setattr(self, result_name + '_imply', Imply(self,
+                                                        self.get_imply_hparams(hparams,
+                                                                               result_name + '_imply' + '_atcd',
+                                                                               consequents)))
+
+    def apply_rule(self, x) -> None:
+        batched_ecg, batched_obj_feat = x
+        for i in range(len(self.comp_op_names)):
+            comp_op_name = self.comp_op_names[i]
+            object_name = comp_op_name[:-3]
+            operation = self.operations[object_name]
+            operation = operation[:operation.find(self.thresholds[object_name]) - 3]
+            features = re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', operation)
+            for feature in features:
+                if '_' in feature:
+                    parts = feature.split('_')
+                    if len(parts == 2) and parts[1] not in ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3',
+                                                            'V4', 'V5', 'V6']:
+                        module_name = parts[1]
+                        self.mid_output[feature] = self.all_mid_output[module_name][parts[0]]
+                    else:
+                        if len(parts) == 3:
+                            if parts[1] in ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']:
+                                module_name = parts[2]
+                                self.mid_output[feature] = self.all_mid_output[module_name][parts[0]] + [parts[1]]
+                            else:
+                                module_name = parts[1]
+                                self.mid_output[feature] = self.all_mid_output[module_name][parts[0] + [parts[2]]]
+
+                operation = operation.replace(feature, '{' + feature + '}')
+                if feature in self.all_mid_output.keys():
+                    self.mid_output[feature] = self.all_mid_output[feature]
+                    continue
+                else:
+                    if feature in self.mid_output.keys():
+                        continue
+                    else:
+                        setattr(self, feature, get_by_str(batched_obj_feat, [feature], Feature))
+                        self.mid_output[feature] = get_by_str(batched_obj_feat, [feature], Feature)
+            getattr(self, comp_op_name)(eval(operation.format(**self.mid_output)))
+
+        focused_embed = self.get_focused_embed()
+        decision_embed = None if self.use_lattice else self.imply_decision_embed_layer(focused_embed)
+        imply_input = (focused_embed, decision_embed)
+
+        # imply
+        def to_prefix(expr):
+            if type(expr) is And:
+                return 'self.AND([' + ', '.join(to_prefix(arg) for arg in expr.args) + '])'
+            elif type(expr) is Or:
+                return 'self.OR([' + ', '.join(to_prefix(arg) for arg in expr.args) + '])'
+            elif type(expr) is Not:
+                return 'self.NOT([' + to_prefix(expr.args[0]) + '])'
+            else:
+                return str(expr)
+
+        for result_name, trace in self.traces.items():
+            features = re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', trace)
+            exp_trace = parse_expr(trace)
+            exp_trace = to_prefix(exp_trace)
+            for feature in features:
+                exp_trace.replace(feature, 'self.mid_output[' + feature + ']')
+            self.mid_output[result_name + '_imply_atcd'] = eval(exp_trace)
+            getattr(self, result_name + '_imply')(imply_input)
+
+    def add_explanation(self, mid_output_agg: pd.Series, report_file_obj):
+        report_file_obj.write(f'### {self.name}\n')
+        for result_name, trace in self.traces.items():
+            features = re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', trace)
+            for feature in features:
+                operation_names = self.operations.keys()
+                if feature in operation_names:
+                    self.add_comp_exp(mid_output_agg, report_file_obj, feature + '_imp')
+                    operation_names.remove(feature)
+            self.add_imply_exp(mid_output_agg, report_file_obj, trace, result_name + '_imply' + '_atcd',
+                               result_name + '_imply')
+
+
+class RhythmModule(EcgStep):
     focused_leads: list[str] = RHYTHM_LEADS
     obj_feat_names: list[str] = ['BRAD', 'TACH']
     feat_imp_names: list[str] = ['BRAD_imp', 'TACH_imp']
@@ -457,7 +630,6 @@ class RhythmModule(EcgStep):
 
 
 class BlockModule(EcgStep):
-
     focused_leads: list[str] = BLOCK_LEADS
     obj_feat_names: list[str] = ['LPR', 'LQRS']
     feat_imp_names: list[str] = ['LPR_imp', 'LQRS_imp']
@@ -513,7 +685,6 @@ class BlockModule(EcgStep):
 
 
 class WPWModule(EcgStep):
-
     focused_leads: list[str] = ALL_LEADS
     obj_feat_names: list[str] = ['LQRS_WPW', 'SPR']
     feat_imp_names: list[str] = ['LQRS_WPW_imp', 'SPR_imp']
@@ -555,7 +726,8 @@ class WPWModule(EcgStep):
         self.mid_output['WPW_imply_atcd'] = self.AND([
             self.mid_output['LQRS_WPW_imp'],
             self.NOT(self.all_mid_output[BlockModule.__name__]['LBBB_imp_Block']),
-            self.NOT(self.all_mid_output[BlockModule.__name__]['RBBB_imp_Block']), self.mid_output['SPR_imp']
+            self.NOT(self.all_mid_output[BlockModule.__name__]['RBBB_imp_Block']),
+            self.mid_output['SPR_imp']
         ])
         self.WPW_imply(imply_input)
 
@@ -641,8 +813,12 @@ class STModule(EcgStep):
         imply_input = (focused_embed, decision_embed)
 
         # GOR_2(STE_II_imp, STE_III_imp, STE_aVF_imp) -> IMI_imp_STE
-        self.mid_output['IMI_imply_STE_atcd'] = self.GOR(
-            [self.mid_output['STE_II_imp'], self.mid_output['STE_III_imp'], self.mid_output['STE_aVF_imp']])
+        self.mid_output['IMI_imply_STE_atcd'] = (
+            self.GOR([
+                self.mid_output['STE_II_imp'],
+                self.mid_output['STE_III_imp'],
+                self.mid_output['STE_aVF_imp']
+            ]))
         self.IMI_imply_STE(imply_input)
 
         # (STE_V1_imp ∧ STE_V2_imp) ∨ (STE_V2_imp ∧ STE_V3_imp) ∨ ... ∨ (STE_V5_imp ∧ STE_V6_imp) -> AMI_imp_STE
@@ -656,10 +832,13 @@ class STModule(EcgStep):
         self.AMI_imply_STE(imply_input)
 
         # GOR_2(STE_I_imp, STE_aVL_imp, STE_V5_imp, STE_V6_imp) -> LMI_imp_STE
-        self.mid_output['LMI_imply_STE_atcd'] = self.GOR([
-            self.mid_output['STE_I_imp'], self.mid_output['STE_aVL_imp'], self.mid_output['STE_V5_imp'],
-            self.mid_output['STE_V6_imp']
-        ])
+        self.mid_output['LMI_imply_STE_atcd'] = (
+            self.GOR([
+                self.mid_output['STE_I_imp'],
+                self.mid_output['STE_aVL_imp'],
+                self.mid_output['STE_V5_imp'],
+                self.mid_output['STE_V6_imp']
+            ]))
         self.LMI_imply_STE(imply_input)
 
         # * Ancillary criteria
@@ -667,8 +846,12 @@ class STModule(EcgStep):
         self.IMI_imply_STD(imply_input)
 
         # GOR_2(STD_II_imp, STD_III_imp, STD_aVF_imp) -> AMI_imp_STD ∧ LMI_imp_STD
-        self.mid_output['AMI_LMI_imply_STD_atcd'] = self.GOR(
-            [self.mid_output['STD_II_imp'], self.mid_output['STD_III_imp'], self.mid_output['STD_aVF_imp']])
+        self.mid_output['AMI_LMI_imply_STD_atcd'] = (
+            self.GOR([
+                self.mid_output['STD_II_imp'],
+                self.mid_output['STD_III_imp'],
+                self.mid_output['STD_aVF_imp']
+            ]))
         self.AMI_LMI_imply_STD(imply_input)
 
         # STD_V5_imp ∨ STD_V6_imp -> LVH_imp_STD
@@ -805,7 +988,6 @@ class QRModule(EcgStep):
 
 
 class PModule(EcgStep):
-
     focused_leads: list[str] = P_LEADS
     obj_feat_names: list[str] = ['LP_II', 'PEAK_P_II', 'PEAK_P_V1']
     feat_imp_names: list[str] = ['LP_II_imp', 'PEAK_P_II_imp', 'PEAK_P_V1_imp']
@@ -885,7 +1067,6 @@ class PModule(EcgStep):
 
 
 class VHModule(EcgStep):
-
     focused_leads: list[str] = VH_LEADS
     obj_feat_names: list[str] = [
         'AGE_OLD', 'LVH_L1_OLD', 'LVH_L1_YOUNG', 'LVH_L2_MALE', 'LVH_L2_FEMALE', 'PEAK_R_V1', 'DEEP_S_V5', 'DEEP_S_V6',
@@ -964,12 +1145,13 @@ class VHModule(EcgStep):
         imply_input = (focused_embed, decision_embed)
 
         # (AGE_OLD_imp ∧ LVH_L1_OLD_imp) ∨ (~AGE_OLD_imp ∧ LVH_L1_YOUNG_imp) ∨ (MALE ∧ LVH_L2_MALE_imp) ∨ (~MALE ∧ LVH_L2_FEMALE_imp) -> LVH_imp_VH
-        self.mid_output['LVH_imply_VH_atcd'] = self.OR([
-            self.AND([self.mid_output['AGE_OLD_imp'], self.mid_output['LVH_L1_OLD_imp']]),
-            self.AND([self.NOT(self.mid_output['AGE_OLD_imp']), self.mid_output['LVH_L1_YOUNG_imp']]),
-            self.AND([MALE, self.mid_output['LVH_L2_MALE_imp']]),
-            self.AND([self.NOT(MALE), self.mid_output['LVH_L2_FEMALE_imp']]),
-        ])
+        self.mid_output['LVH_imply_VH_atcd'] = (
+            self.OR([
+                self.AND([self.mid_output['AGE_OLD_imp'], self.mid_output['LVH_L1_OLD_imp']]),
+                self.AND([self.NOT(self.mid_output['AGE_OLD_imp']), self.mid_output['LVH_L1_YOUNG_imp']]),
+                self.AND([MALE, self.mid_output['LVH_L2_MALE_imp']]),
+                self.AND([self.NOT(MALE), self.mid_output['LVH_L2_FEMALE_imp']]),
+            ]))
         self.LVH_imply_VH(imply_input)
 
         # GOR_2(PEAK_R_V1_imp, DEEP_S_V5_imp ∨ DEEP_S_V6_imp, DOM_R_V1_imp, DOM_S_V5_imp ∨ DOM_S_V6_imp, RAD) -> RVH_imp_VH
@@ -1014,8 +1196,8 @@ class TModule(EcgStep):
     comp_op_names: list[str] = [f'invt_{lead}_lt' for lead in T_LEADS]
     imply_names: list[str] = ['MI_imply_T', 'LVH_imply_T', 'RVH_imply_T']
     pred_dx_names: list[tuple[str,
-                              list[str]]] = [('NORM', ['NORM_imp']), ('IMI', ['IMI_imp_T']), ('AMI', ['AMI_imp_T']),
-                                             ('LMI', ['LMI_imp_T']), ('LVH', ['LVH_imp_T']), ('RVH', ['RVH_imp_T'])]
+    list[str]]] = [('NORM', ['NORM_imp']), ('IMI', ['IMI_imp_T']), ('AMI', ['AMI_imp_T']),
+                   ('LMI', ['LMI_imp_T']), ('LVH', ['LVH_imp_T']), ('RVH', ['RVH_imp_T'])]
 
     NORM_if_NOT: list[str] = ['IMI_imp_T', 'AMI_imp_T', 'LMI_imp_T', 'LVH_imp_T', 'RVH_imp_T']
 
