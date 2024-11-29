@@ -6,6 +6,11 @@ Previous literatures on applying AI or machine learning to ECG diagnosis often f
 
 To address this, I designed an inherently explainable AI framework that replicates cardiologists’ decision-making processes by incorporating logical rules used in ECG diagnoses. This framework retains the advantages of machine learning in detecting nuanced details while aligning its outputs with clinical reasoning. Furthermore, my framework can generate detailed diagnostic reports that explain predictions, such as pointing out relevant ECG patterns, making the results more interpretable and trustworthy for medical professionals.
 
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/66c8999c-e373-4027-9f30-0e50c384c77d" alt="">
+    Fig1: The 12-lead ECG plot of a patient with anterior myocardial infarction (AMI). The ECG XAI model derived from the proposed framework can provide detailed explanations for its predictions, such as pointing out the ST-segment elevation in leads V1-V4, which is one of the hallmarks of AMI.
+</p>
+
 For more details, please refer to the [technical report](Final_Report.pdf).
 
 
