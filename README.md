@@ -1,7 +1,12 @@
 # ECG_XAI
 
-This repository contains the implementation for my Final Year Project at NUS. In this project, I developed a scalable explainable AI (XAI) framework for electrocardiogram (ECG) diagnosis. The framework can easily incorporate ECG rules expressible in First-order Logic (FOL), automatically capture intermediate interpretable ECG features, and finally produce a diagnosis report comprehensible to cardiologists. The detailed report can be found [here](Final_Report.pdf).
+This repository contains the implementation for my Final Year Project at the National University of Singapore (advisor: [Prof. Brian Y. Lim](https://scholar.google.com/citations?user=_bza0AoAAAAJ)). The aim of this project is to develop an explainable AI (XAI) framework that aligns machine learning predictions with clinical reasoning in electrocardiogram (ECG) diagnosis, providing clinically relevant explanations to support cardiologists' decision-making.
 
+Previous literatures on applying AI or machine learning to ECG diagnosis often focus on achieving high prediction accuracy. Although some papers do utilize some post-hoc XAI techniques to highlight parts of ECG that are most relevant to the prediction, these highlights often fail to provide insights aligned with cardiologists' clinical reasoning, which relies on identifying specific ECG patterns indicative of heart conditions.
+
+To address this, I designed an inherently explainable AI framework that replicates cardiologists’ decision-making processes by incorporating logical rules used in ECG diagnoses. This framework retains the advantages of machine learning in detecting nuanced details while aligning its outputs with clinical reasoning. Furthermore, my framework can generate detailed diagnostic reports that explain predictions, such as pointing out relevant ECG patterns, making the results more interpretable and trustworthy for medical professionals.
+
+For more details, please refer to the [technical report](Final_Report.pdf).
 
 
 ## Abstract
