@@ -201,7 +201,7 @@ def check_all_inverted_waves(wave_name: str, cleaned: NDArray[np.float32],
 def delineation2signal(delineation: dict[str, NDArray[np.int32]]):
     """
     Convert the delineation to signals where the occurrences of peaks, onsets and offsets marked as “1” in a list of zeros.
-    The signals are then combined into a DataFrame
+    The signals are then combined into a DataFrameF
     """
     delineation_signals = {}
 

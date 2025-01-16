@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import pandas as pd
 import re
-from sympy import *
+from sympy import parse_expr
 from src.basic.constants import AGE_OLD_THRESH, AXIS_LEADS, BLOCK_LEADS, BRAD_THRESH, DEEP_S_THRESH, DOM_R_THRESH, \
     DOM_S_THRESH, INVT_THRESH, LP_THRESH_II, LQRS_WPW_THRESH, LVH_L1_OLD_THRESH, LVH_L1_YOUNG_THRESH, \
     LVH_L2_FEMALE_THRESH, LVH_L2_MALE_THRESH, N_LEADS, LEAD_TO_INDEX, ALL_LEADS, P_LEADS, PEAK_P_THRESH_II, \
@@ -398,7 +398,7 @@ class EcgModule(EcgStep):
         self.feat_imp_names = [x + '_imp' for x in self.obj_feat_names]
 
         self.thresholds = ast.literal_eval(data['thresholds'])
-        for key, value in self.thresholds:
+        for key, value in self.thresholds.items():
             self.thresholds[key] = int(''.join(filter(str.isdigit, value)))
 
         self.comp_op_names = ast.literal_eval(data['comp_op_names'])
@@ -427,11 +427,11 @@ class EcgModule(EcgStep):
                 new_key = value2key[value] + "&" + key + "_Block"
                 temp_traces[new_key] = value
                 temp_traces.pop(value2key[value])
-                self.pred_dx_names.remove((value, [value + '_imp']))
+                self.pred_dx_names.remove((value2key[value], [value2key[value] + '_imp']))
                 self.pred_dx_names.remove((key, [key + '_imp']))
-                self.pred_dx_names.append((key, [key + '_imp' + "_Block"]))
-                self.pred_dx_names.append((value, [new_key + '_imp' + "_Block"]))
-                self.imply_names.remove(value + '_imply')
+                self.pred_dx_names.append((key, [new_key + '_imp' + "_Block"]))
+                self.pred_dx_names.append((value2key[value], [new_key + '_imp' + "_Block"]))
+                self.imply_names.remove(value2key[value] + '_imply')
                 self.imply_names.remove(key + '_imply')
                 self.imply_names.append(new_key + '_imply')
             else:
@@ -441,9 +441,6 @@ class EcgModule(EcgStep):
 
         self.operations = ast.literal_eval(data['Operations'])
         self.required_features = ast.literal_eval(data['Required Features'])
-
-        for key, value in self.thresholds.items():
-            self.thresholds[key] = int(''.join(filter(str.isdigit, value)))
 
         # Comparison operators
         for i in range(len(self.comp_op_names)):
@@ -456,10 +453,20 @@ class EcgModule(EcgStep):
             else:
                 setattr(self, comp_op_name, GT(self, object_imp, threshold))
 
+        ########################################
+        self.mid_output['output_dims']= 1
+        self.mid_output['use_mpav']=True
+        self.mid_output['lattice_sizes']= 1
+        self.mid_output['Imply_input_dim']= 1
+        # print(self.id)
+        # print(self.mid_output)
+        # print(self.all_mid_output)
+        ########################################
+
         # Imply
         if not self.use_lattice:
             self.imply_decision_embed_layer = self.get_mlp_embed_layer(hparams)
-        for result_name, _ in self.traces:
+        for result_name, _ in self.traces.items():
             consequents = result_name.replace("_Block", "").split("&")
             consequents = [x + "_imp" for x in consequents]
             setattr(self, result_name + '_imply', Imply(self,

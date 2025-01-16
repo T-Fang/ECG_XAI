@@ -3,7 +3,7 @@ import platform
 
 # File Names
 CURRENT_OS = platform.system()
-PROJECT_PATH = '/data2/haoyang/ECG_XAI/' if CURRENT_OS == 'Linux' else '/Users/haoyangchen/Desktop/ChenHaoyang/coding/python/ECG_XAI/'
+PROJECT_PATH = '/Users/haoyangchen/Coding/python/ECG_XAI'
 # >>>>>>> Stashed changes
 PTBXL_PATH = os.path.join(PROJECT_PATH, 'data/ptbxl/')
 PROCESSED_DATA_PATH = os.path.join(PROJECT_PATH, 'data/processed/')
