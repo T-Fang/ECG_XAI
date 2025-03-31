@@ -33,7 +33,7 @@ def set_cuda_env(gpu_ids='1'):
         info = torch.cuda.get_device_properties(i)
         print(f"CUDA:{i} {info.name}, {info.total_memory / 1024 ** 2}MB")
     # torch.cuda.set_device(0)
-    torch.set_float32_matmul_precision('medium')
+    # torch.set_float32_matmul_precision('medium')
 
 
 def set_gpu_device(gpu_number=0):
@@ -123,8 +123,8 @@ def get_common_trainer_params() -> dict:
     return {
         'accelerator': 'gpu' if torch.cuda.is_available() else 'cpu',
         'devices': find_usable_cuda_devices(1) if torch.cuda.is_available() else None,
-        'precision': 'bf16',
-        # 'precision': '32',
+        # 'precision': 'bf16',
+        'precision': '64',
         'log_every_n_steps': LOG_INTERVAL,
         'check_val_every_n_epoch': CHECK_VAL_EVERY_N_EPOCH,
         'enable_progress_bar': False,

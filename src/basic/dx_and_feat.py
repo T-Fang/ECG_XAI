@@ -218,7 +218,6 @@ def get_feat_vector(object):
     """
     return torch.tensor([getattr(object, feat.name) for feat in Feature], dtype=torch.float32)
 
-
 def pad_vector(values: torch.Tensor, keys: list[str], enum_type: Diagnosis | Feature):
     """
     Pad the diagnoses/feature values with zeros
